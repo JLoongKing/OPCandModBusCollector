@@ -1,0 +1,19 @@
+点位名称,点位地址,数据类型,描述
+温度,ns=2;s=Temperature,Double,设备温度监测
+压力,ns=2;s=Pressure,Double,设备压力监测
+运行状态,ns=2;s=Status,Integer,设备运行状态
+报警状态,ns=2;s=Alarm,Boolean,设备报警状态
+生产速率,ns=2;s=Rate,Double,生产速率
+产量计数,ns=2;s=Count,Integer,产量统计
+电压,ns=2;s=Voltage,Double,设备电压
+电流,ns=2;s=Current,Double,设备电流
+功率,ns=2;s=Power,Double,设备功率
+频率,ns=2;s=Frequency,Double,设备频率
+
+温度(简化格式),Temperature,Double,设备温度监测 - 简化格式
+压力(简化格式),Pressure,Double,设备压力监测 - 简化格式
+运行状态(简化格式),Status,Integer,设备运行状态 - 简化格式
+报警状态(简化格式),Alarm,Boolean,设备报警状态 - 简化格式
+
+温度(自定义命名空间),ns=3;s=Temperature,Double,设备温度监测 - 命名空间3
+压力(自定义命名空间),ns=3;s=Pressure,Double,设备压力监测 - 命名空间3
