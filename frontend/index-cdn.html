@@ -371,7 +371,7 @@
             const url = window.URL.createObjectURL(new Blob([res.data]))
             const link = document.createElement('a')
             link.href = url
-            const fileName = protocol === 'MODBUS' ? 'Modbus点位导入模板.xlsx' : 'OPCUA点位导入模板.xlsx'
+            const fileName = protocol === 'MODBUS' ? 'Modbus点位模板.xlsx' : 'OPCUA点位模板.xlsx'
             link.setAttribute('download', fileName)
             document.body.appendChild(link)
             link.click()
