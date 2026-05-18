@@ -142,7 +142,8 @@ public class TaskController {
 
             HttpHeaders headersHttp = new HttpHeaders();
             headersHttp.setContentType(MediaType.APPLICATION_OCTET_STREAM);
-            headersHttp.setContentDispositionFormData("attachment", "点位导入模板.xlsx");
+            String fileName = "MODBUS".equalsIgnoreCase(protocol) ? "Modbus点位导入模板.xlsx" : "OPCUA点位导入模板.xlsx";
+            headersHttp.setContentDispositionFormData("attachment", fileName);
 
             return ResponseEntity.ok()
                     .headers(headersHttp)
