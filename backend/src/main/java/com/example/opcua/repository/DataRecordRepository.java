@@ -31,6 +31,11 @@ public interface DataRecordRepository extends JpaRepository<DataRecord, Long> {
     List<DataRecord> findByTaskIdAndTimestampBetween(@Param("taskId") Long taskId,
                                                        @Param("startTime") LocalDateTime startTime,
                                                        @Param("endTime") LocalDateTime endTime);
+                                                        
+    @Query("SELECT d FROM DataRecord d WHERE d.taskId = :taskId AND d.timestamp BETWEEN :startTime AND :endTime ORDER BY d.timestamp DESC")
+    List<DataRecord> findByTaskIdAndTimestampBetweenOrderByTimestampDesc(@Param("taskId") Long taskId,
+                                                       @Param("startTime") LocalDateTime startTime,
+                                                       @Param("endTime") LocalDateTime endTime);
 
     void deleteByTaskId(Long taskId);
 }

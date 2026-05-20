@@ -21,6 +21,9 @@
     <properties>
         <java.version>1.8</java.version>
         <milo.version>0.6.8</milo.version>
+        <!-- Modbus 依赖 -->
+        <modbus4j.version>3.1.0</modbus4j.version>
+        <modbus.master.tcp.version>1.2.2</modbus.master.tcp.version>
     </properties>
 
     <repositories>
@@ -29,9 +32,24 @@
             <id>central</id>
             <url>https://repo1.maven.org/maven2/</url>
         </repository>
+        <repository>
+            <id>jitpack.io</id>
+            <url>https://jitpack.io</url>
+        </repository>
+        <!-- Maven 快照仓库 -->
+        <repository>
+            <id>maven-snapshots</id>
+            <url>https://oss.sonatype.org/content/repositories/snapshots/</url>
+        </repository>
     </repositories>
 
     <dependencies>
+        <!-- modBus依赖 -->
+        <dependency>
+            <groupId>com.github.infiniteautomation</groupId>
+            <artifactId>modbus4j</artifactId>
+            <version>master-SNAPSHOT</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter</artifactId>
@@ -77,8 +95,6 @@
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka</artifactId>
         </dependency>
-
-
 
         <!-- Kafka测试依赖 -->
         <dependency>

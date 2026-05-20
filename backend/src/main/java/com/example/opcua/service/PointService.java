@@ -1,9 +1,11 @@
 package com.example.opcua.service;
 
 import com.example.opcua.entity.TaskPoint;
+import com.example.opcua.repository.TaskPointRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -16,6 +18,9 @@ import java.util.List;
 @Slf4j
 @Service
 public class PointService {
+    
+    @Autowired
+    private TaskPointRepository taskPointRepository;
 
     public List<TaskPoint> importFromExcel(MultipartFile file) throws IOException {
         List<TaskPoint> points = new ArrayList<>();
@@ -45,7 +50,7 @@ public class PointService {
                 if (addressCell != null) {
                     point.setAddress(getCellValueAsString(addressCell));
                 }
-                
+
                 Cell devIdCell = row.getCell(2);
                 if (devIdCell != null) {
                     point.setDevId(getCellValueAsString(devIdCell));
@@ -56,14 +61,54 @@ public class PointService {
                     point.setNodeId(getCellValueAsString(nodeIdCell));
                 }
                 
-                Cell scaleFactorCell = row.getCell(4);
+                // 读取数据类型和位数（用于Modbus）
+                Cell dataTypeCell = row.getCell(4);
+                if (dataTypeCell != null) {
+                    String dataType = getCellValueAsString(dataTypeCell);
+                    if (dataType != null && !dataType.isEmpty()) {
+                        point.setDataType(dataType.toLowerCase());
+                    }
+                }
+                
+                Cell bitLengthCell = row.getCell(5);
+                if (bitLengthCell != null) {
+                    String bitLengthStr = getCellValueAsString(bitLengthCell);
+                    if (bitLengthStr != null && !bitLengthStr.isEmpty()) {
+                        try {
+                            point.setBitLength(Integer.parseInt(bitLengthStr));
+                        } catch (NumberFormatException e) {
+                            // 忽略解析错误
+                        }
+                    }
+                }
+                
+                // 读取比例系数（可能在第5或第6列）
+                Cell scaleFactorCell = row.getCell(6);
                 if (scaleFactorCell != null) {
                     String scaleFactorStr = getCellValueAsString(scaleFactorCell);
                     if (scaleFactorStr != null && !scaleFactorStr.isEmpty()) {
                         try {
                             point.setScaleFactor(Double.parseDouble(scaleFactorStr));
                         } catch (NumberFormatException e) {
-                            // 忽略解析失败
+                            // 忽略解析错误
+                        }
+                    }
+                } else {
+                    // 如果第6列没有，尝试第4列（用于OPC UA）
+                    scaleFactorCell = row.getCell(4);
+                    if (scaleFactorCell != null) {
+                        String scaleFactorStr = getCellValueAsString(scaleFactorCell);
+                        if (scaleFactorStr != null && !scaleFactorStr.isEmpty()) {
+                            try {
+                                // 如果第4列不是数据类型，则认为是比例系数
+                                if (!"int".equals(scaleFactorStr.toLowerCase()) && 
+                                    !"uint".equals(scaleFactorStr.toLowerCase()) && 
+                                    !"float".equals(scaleFactorStr.toLowerCase())) {
+                                    point.setScaleFactor(Double.parseDouble(scaleFactorStr));
+                                }
+                            } catch (NumberFormatException e) {
+                                // 忽略解析错误
+                            }
                         }
                     }
                 }
@@ -79,6 +124,22 @@ public class PointService {
         
         log.info("从 Excel 导入 {} 个点位", points.size());
         return points;
+    }
+
+    /**
+     * 保存多个点位
+     * 
+     * @param points 点位列表
+     * @return 保存后的点位列表
+     */
+    public List<TaskPoint> savePoints(List<TaskPoint> points) {
+        if (points == null || points.isEmpty()) {
+            return new ArrayList<>();
+        }
+        
+        List<TaskPoint> savedPoints = taskPointRepository.saveAll(points);
+        log.info("保存了 {} 个点位", savedPoints.size());
+        return savedPoints;
     }
 
     private String getCellValueAsString(Cell cell) {

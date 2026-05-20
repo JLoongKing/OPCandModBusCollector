@@ -1,0 +1,19 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "TestModbus",
+            "request": "launch",
+            "mainClass": "TestModbus",
+            "projectName": "opcua-client"
+        },
+        {
+            "type": "java",
+            "name": "Attach to Spring Boot",
+            "request": "attach",
+            "hostName": "localhost",
+            "port": 5005
+        }
+    ]
+}

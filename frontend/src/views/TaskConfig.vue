@@ -52,6 +52,10 @@
           <el-input-number v-model="form.opcScanInterval" :min="100" :max="600000" :step="100" />
           <span class="field-hint">定时读取所有点位的间隔，默认 1000ms</span>
         </el-form-item>
+        <el-form-item label="命名空间">
+          <el-input v-model="form.opcNamespace" placeholder="如：2" />
+          <span class="field-hint">OPC UA服务器的命名空间，默认0，导入Excel时会自动提取</span>
+        </el-form-item>
       </template>
 
       <template v-if="form.protocolType === 'MODBUS_TCP'">
@@ -107,6 +111,28 @@
           <el-table-column label="点位编码" min-width="250">
             <template #default="{ row, $index }">
               <el-input v-model="row.nodeId" placeholder="点位编码" size="small" />
+            </template>
+          </el-table-column>
+          <el-table-column v-if="form.protocolType === 'MODBUS_TCP'" label="数据类型" width="120">
+            <template #default="{ row }">
+              <el-select v-model="row.dataType" placeholder="选择类型" size="small" style="width: 100%;">
+                <el-option label="int" value="int" />
+                <el-option label="uint" value="uint" />
+                <el-option label="float" value="float" />
+              </el-select>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="form.protocolType === 'MODBUS_TCP'" label="位数" width="100">
+            <template #default="{ row }">
+              <el-select v-model="row.bitLength" placeholder="选择位数" size="small" style="width: 100%;">
+                <el-option :label="16" :value="16" />
+                <el-option :label="32" :value="32" />
+              </el-select>
+            </template>
+          </el-table-column>
+          <el-table-column label="比例系数" width="120">
+            <template #default="{ row }">
+              <el-input-number v-model="row.scaleFactor" :min="0.0001" :max="10000" :step="0.1" size="small" style="width: 100%;" />
             </template>
           </el-table-column>
           <el-table-column label="操作" width="80">
@@ -186,6 +212,7 @@ export default {
       opcPassword: '',
       opcSessionTimeout: 5000,
       opcScanInterval: 1000,
+      opcNamespace: '2',
       modbusHost: '127.0.0.1',
       modbusPort: 502,
       modbusTimeout: 3000,
@@ -247,13 +274,19 @@ export default {
     }
 
     const addPoint = () => {
-      form.points.push({
+      const point = {
         name: '',
         address: '',
         devId: '',
         nodeId: '',
+        scaleFactor: 1.0,
         sortOrder: form.points.length + 1
-      })
+      }
+      if (form.protocolType === 'MODBUS_TCP') {
+        point.dataType = 'float'
+        point.bitLength = 32
+      }
+      form.points.push(point)
     }
 
     const removePoint = (index) => {
@@ -304,52 +337,55 @@ export default {
     }
 
     const downloadTemplate = async () => {
-      try {
-        const res = await axios.get(`${API_BASE}/tasks/template`, { responseType: 'blob' })
-        const url = window.URL.createObjectURL(new Blob([res.data]))
-        const a = document.createElement('a')
-        a.href = url
-        a.download = '点位导入模板.xlsx'
-        a.click()
-        window.URL.revokeObjectURL(url)
-      } catch (e) {
-        ElMessage.error('下载模板失败')
-      }
-    }
+          try {
+            let protocol = form.protocolType || 'OPC_UA'
+            // 转换为后端期望的协议名称
+            if (protocol === 'MODBUS_TCP') {
+              protocol = 'MODBUS'
+            }
+            const res = await axios.get(API_BASE + '/tasks/template?protocol=' + protocol, {
+              responseType: 'blob'
+            })
+            const url = window.URL.createObjectURL(new Blob([res.data]))
+            const link = document.createElement('a')
+            link.href = url
+            link.setAttribute('download', protocol + '_点位导入模板.xlsx')
+            document.body.appendChild(link)
+            link.click()
+            document.body.removeChild(link)
+          } catch (e) {
+            ElMessage.error('下载模板失败')
+          }
+        }
 
     const handleExcelUpload = async (options) => {
       const fd = new FormData()
       fd.append('file', options.file)
       try {
-        if (isEdit.value) {
-          const res = await axios.post(`${API_BASE}/tasks/${route.params.id}/import`, fd, {
-            headers: { 'Content-Type': 'multipart/form-data' }
+        // 统一使用预览模式解析，然后在前端合并，避免加载已删除的点位
+        const res = await axios.post(`${API_BASE}/tasks/import/preview`, fd, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        })
+        if (res.data.success && Array.isArray(res.data.data)) {
+          const start = form.points.length
+          res.data.data.forEach((p, i) => {
+            const point = {
+              name: p.name || '',
+              address: p.address || '',
+              devId: p.devId || '',
+              nodeId: p.nodeId || '',
+              scaleFactor: p.scaleFactor !== undefined && p.scaleFactor !== null ? p.scaleFactor : 1.0,
+              sortOrder: start + i + 1
+            }
+            if (form.protocolType === 'MODBUS_TCP') {
+              point.dataType = p.dataType || 'float'
+              point.bitLength = p.bitLength || 32
+            }
+            form.points.push(point)
           })
-          if (res.data.success) {
-            ElMessage.success(res.data.message || '导入成功')
-            await loadTask()
-          } else {
-            ElMessage.error(res.data.message || '导入失败')
-          }
+          ElMessage.success(res.data.message || '已合并到列表')
         } else {
-          const res = await axios.post(`${API_BASE}/tasks/import/preview`, fd, {
-            headers: { 'Content-Type': 'multipart/form-data' }
-          })
-          if (res.data.success && Array.isArray(res.data.data)) {
-            const start = form.points.length
-            res.data.data.forEach((p, i) => {
-              form.points.push({
-                name: p.name || '',
-                address: p.address || '',
-                devId: p.devId || '',
-                nodeId: p.nodeId || '',
-                sortOrder: start + i + 1
-              })
-            })
-            ElMessage.success(res.data.message || '已合并到列表')
-          } else {
-            ElMessage.error(res.data.message || '解析失败')
-          }
+          ElMessage.error(res.data.message || '解析失败')
         }
       } catch (e) {
         ElMessage.error('上传失败')

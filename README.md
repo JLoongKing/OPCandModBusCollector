@@ -12,7 +12,9 @@ opcua/
 │   └── README.md     # 后端说明文档
 └── frontend/         # 前端应用（Vue 3）
     ├── src/          # Vue源代码
-    ├── index-cdn.html # CDN版本前端页面
+    ├── index.html    # 主入口页面
+    ├── package.json  # 依赖配置
+    ├── vite.config.js # Vite构建配置
     └── README.md     # 前端说明文档
 ```
 
@@ -23,13 +25,15 @@ opcua/
 cd backend
 mvn spring-boot:run
 ```
+后端运行在：http://localhost:8081
 
 ### 2. 启动前端应用
 ```bash
 cd frontend
-node server.js
+npm install
+npm run dev
 ```
-然后访问：http://localhost:3000/index-cdn.html
+然后访问：http://localhost:3000
 
 ## 主要功能
 

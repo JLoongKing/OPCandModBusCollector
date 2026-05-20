@@ -72,6 +72,16 @@ public class TaskService {
                 if (point.getNodeId() == null || point.getNodeId().trim().isEmpty()) {
                     point.setNodeId("POINT-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 8));
                 }
+                // 设置默认值
+                if (point.getDataType() == null || point.getDataType().trim().isEmpty()) {
+                    point.setDataType("float");
+                }
+                if (point.getBitLength() == null) {
+                    point.setBitLength(32);
+                }
+                if (point.getScaleFactor() == null) {
+                    point.setScaleFactor(1.0);
+                }
                 validPoints.add(point);
             }
             }
@@ -102,6 +112,7 @@ public class TaskService {
         existing.setOpcPassword(updatedTask.getOpcPassword());
         existing.setOpcSessionTimeout(updatedTask.getOpcSessionTimeout());
         existing.setOpcScanInterval(updatedTask.getOpcScanInterval());
+        existing.setOpcNamespace(updatedTask.getOpcNamespace()); // 添加这行，更新opcNamespace
 
         existing.setModbusHost(updatedTask.getModbusHost());
         existing.setModbusPort(updatedTask.getModbusPort());
@@ -118,7 +129,12 @@ public class TaskService {
         existing.setKafkaBufferMemory(updatedTask.getKafkaBufferMemory());
 
         if (updatedTask.getPoints() != null) {
+            // 完全清空现有点位，确保orphanRemoval生效
             existing.getPoints().clear();
+            
+            // 强制刷新持久化上下文，确保删除操作被记录
+            taskRepository.flush();
+            
             int sortOrder = 0;
             for (TaskPoint point : updatedTask.getPoints()) {
                 // 不使用前端传来的id，使用新创建的id
@@ -127,6 +143,9 @@ public class TaskService {
                 newPoint.setAddress(point.getAddress());
                 newPoint.setDevId(point.getDevId());
                 newPoint.setNodeId(point.getNodeId());
+                newPoint.setDataType(point.getDataType());
+                newPoint.setBitLength(point.getBitLength());
+                newPoint.setScaleFactor(point.getScaleFactor());
                 newPoint.setSortOrder(sortOrder++);
                 newPoint.setTask(existing);
                 existing.getPoints().add(newPoint);
@@ -196,6 +215,9 @@ public class TaskService {
             p.setAddress(src.getAddress());
             p.setDevId(src.getDevId());
             p.setNodeId(src.getNodeId());
+            p.setDataType(src.getDataType());
+            p.setBitLength(src.getBitLength());
+            p.setScaleFactor(src.getScaleFactor());
             p.setSortOrder(nextOrder++);
             p.setTask(task);
             task.getPoints().add(p);

@@ -33,6 +33,12 @@ public class TaskPoint {
     @Column(name = "scale_factor", precision = 10, scale = 4)
     private Double scaleFactor = 1.0;
 
+    @Column(name = "data_type", length = 20)
+    private String dataType = "float";
+
+    @Column(name = "bit_length")
+    private Integer bitLength = 32;
+
     @Column(name = "sort_order")
     private Integer sortOrder;
 

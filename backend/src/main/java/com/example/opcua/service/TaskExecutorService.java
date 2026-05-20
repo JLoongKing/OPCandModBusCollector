@@ -24,7 +24,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -51,6 +54,57 @@ public class TaskExecutorService {
     private final Map<Long, ScheduledExecutorService> taskExecutors = new ConcurrentHashMap<>();
     private final Map<Long, OpcUaClient> opcUaClients = new ConcurrentHashMap<>();
     private final Random random = new Random();
+    
+    /**
+     * 数据记录内部类，用于Kafka报文构建
+     */
+    private static class DataRecord {
+        private String pointName;
+        private String nodeId;
+        private String value;
+        private LocalDateTime timestamp;
+        
+        public DataRecord() {}
+        
+        public DataRecord(String pointName, String nodeId, String value, LocalDateTime timestamp) {
+            this.pointName = pointName;
+            this.nodeId = nodeId;
+            this.value = value;
+            this.timestamp = timestamp;
+        }
+        
+        public String getPointName() {
+            return pointName;
+        }
+        
+        public void setPointName(String pointName) {
+            this.pointName = pointName;
+        }
+        
+        public String getNodeId() {
+            return nodeId;
+        }
+        
+        public void setNodeId(String nodeId) {
+            this.nodeId = nodeId;
+        }
+        
+        public String getValue() {
+            return value;
+        }
+        
+        public void setValue(String value) {
+            this.value = value;
+        }
+        
+        public LocalDateTime getTimestamp() {
+            return timestamp;
+        }
+        
+        public void setTimestamp(LocalDateTime timestamp) {
+            this.timestamp = timestamp;
+        }
+    }
 
     public void startTask(Task task) {
         Long taskId = task.getId();
@@ -127,36 +181,116 @@ public class TaskExecutorService {
         }
     }
 
+    /**
+     * 数据采集主方法
+     * <p>
+     * 根据任务协议类型调用不同的采集逻辑，并将采集结果发送到Kafka
+     * 
+     * @param task 任务对象
+     */
     private void collectData(Task task) {
         if (task.getPoints() == null || task.getPoints().isEmpty()) {
             return;
         }
 
         LocalDateTime now = LocalDateTime.now();
-        List<String> kafkaParts = new ArrayList<>();
+        // 按设备分组存储数据
+        Map<String, List<DataRecord>> deviceDataMap = new HashMap<>();
 
         if ("OPC_UA".equals(task.getProtocolType())) {
-            collectOpcUa(task, now, kafkaParts);
+            collectOpcUaWithDeviceGroup(task, now, deviceDataMap);
         } else if ("MODBUS_TCP".equals(task.getProtocolType())) {
-            collectModbus(task, now, kafkaParts);
+            collectModbusWithDeviceGroup(task, now, deviceDataMap);
         } else {
-            collectSimulated(task, now, kafkaParts);
+            collectSimulatedWithDeviceGroup(task, now, deviceDataMap);
         }
 
-        if (Boolean.TRUE.equals(task.getKafkaEnabled()) && kafkaProducerService != null && !kafkaParts.isEmpty()) {
+        if (Boolean.TRUE.equals(task.getKafkaEnabled()) && kafkaProducerService != null && !deviceDataMap.isEmpty()) {
             try {
                 String topic = task.getKafkaTopic() != null && !task.getKafkaTopic().isEmpty()
                         ? task.getKafkaTopic()
                         : "data-collection";
-                String message = "TASK:" + task.getName() + "|" + String.join(";", kafkaParts) + ";";
-                kafkaProducerService.sendMessageSync(topic, message);
+                
+                // 构建Kafka报文
+                String kafkaMessage = buildKafkaMessage(task, deviceDataMap);
+                kafkaProducerService.sendMessageSync(topic, kafkaMessage);
+                log.debug("任务 {} Kafka发送成功: {}", task.getId(), kafkaMessage);
             } catch (Exception e) {
                 log.error("任务 {} Kafka发送失败: {}", task.getId(), e.getMessage());
             }
         }
     }
+    
+    /**
+     * 构建指定格式的Kafka报文
+     * <p>
+     * 格式说明：
+     * 头：HDMY;YZT_XJH;;;;;;;;
+     * 节点区：{dev1}~{node1};{val1};{time}||{node2};{val2};{time}||,{dev2}~{node1};{val1};{time}||{node2};{val2};{time}||
+     * 
+     * @param task 任务对象
+     * @param deviceDataMap 按设备分组的数据
+     * @return 格式化后的Kafka报文
+     */
+    private String buildKafkaMessage(Task task, Map<String, List<DataRecord>> deviceDataMap) {
+        // 构建头部
+        StringBuilder header = new StringBuilder("HDMY;YZT_XJH;;;;;;;;");
+        
+        // 构建节点区
+        StringBuilder nodeSection = new StringBuilder();
+        
+        // 遍历每个设备的数据
+        for (Map.Entry<String, List<DataRecord>> entry : deviceDataMap.entrySet()) {
+            String deviceId = entry.getKey();
+            List<DataRecord> records = entry.getValue();
+            
+            if (records.isEmpty()) {
+                continue;
+            }
+            
+            // 添加设备分隔符
+            if (nodeSection.length() > 0) {
+                nodeSection.append(",");
+            }
+            
+            // 添加设备前缀
+            nodeSection.append(deviceId).append("~");
+            
+            // 添加该设备的所有节点数据
+            for (int i = 0; i < records.size(); i++) {
+                if (i > 0) {
+                    nodeSection.append("||");
+                }
+                
+                DataRecord record = records.get(i);
+                // 格式：{node1};{val1};{time}
+                // 格式化时间为yyyy-MM-dd HH:mm:ss格式
+                DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+                String timeStr = record.getTimestamp().format(formatter);
+                
+                nodeSection.append(record.getNodeId())
+                          .append(";").append(record.getValue())
+                          .append(";").append(timeStr);
+            }
+            
+            // 每个设备数据结尾添加||
+            nodeSection.append("||");
+        }
+        
+        return header.append(",").append(nodeSection).append(",").toString();
+    }
 
-    private void collectOpcUa(Task task, LocalDateTime now, List<String> kafkaParts) {
+    /**
+     * OPC UA数据采集（按设备分组）
+     * <p>
+     * 从OPC UA服务器读取数据，并按设备ID分组存储
+     * 优先使用设备产生的时间戳
+     * 
+     * @param task 任务对象
+     * @param now 采集时间
+     * @param deviceDataMap 存储结果的设备分组Map
+     */
+    private void collectOpcUaWithDeviceGroup(Task task, LocalDateTime now, Map<String, List<DataRecord>> deviceDataMap) {
         OpcUaClient client = opcUaClients.get(task.getId());
         if (client == null) {
             try {
@@ -170,12 +304,37 @@ public class TaskExecutorService {
 
         List<NodeId> nodeIds = new ArrayList<>();
         List<TaskPoint> orderedPoints = new ArrayList<>();
+        String defaultNamespace = task.getOpcNamespace();
+        
+        // 如果任务没有设置命名空间，默认使用ns=2（常见的OPC UA命名空间）
+        if (defaultNamespace == null || defaultNamespace.isEmpty()) {
+            defaultNamespace = "2";
+            log.info("任务 {} 未设置OPC UA命名空间，默认使用ns=2", task.getId());
+        }
+        
         for (TaskPoint point : task.getPoints()) {
             try {
-                nodeIds.add(NodeId.parse(point.getAddress().trim()));
+                String address = point.getAddress().trim();
+                NodeId nodeId;
+                String fullAddress;
+                
+                // 如果地址已经包含命名空间（如ns=2;s=Bu/test），直接使用
+                if (address.startsWith("ns=")) {
+                    fullAddress = address;
+                } else {
+                    // 如果地址不包含命名空间，使用任务的默认命名空间
+                    // 拼接命名空间和节点ID，格式为ns=2;s=Bu/test
+                    fullAddress = String.format("ns=%s;s=%s", defaultNamespace, address);
+                }
+                
+                // 解析为NodeId
+                nodeId = NodeId.parse(fullAddress);
+                log.debug("任务 {} 点位 {} 完整地址: {}", task.getId(), point.getName(), fullAddress);
+                
+                nodeIds.add(nodeId);
                 orderedPoints.add(point);
             } catch (Exception e) {
-                log.warn("任务 {} 点位 {} 地址非法: {}", task.getId(), point.getName(), point.getAddress());
+                log.warn("任务 {} 点位 {} 地址非法: {}，错误信息: {}", task.getId(), point.getName(), point.getAddress(), e.getMessage());
             }
         }
         if (nodeIds.isEmpty()) {
@@ -189,13 +348,66 @@ public class TaskExecutorService {
 
             for (int i = 0; i < orderedPoints.size(); i++) {
                 TaskPoint point = orderedPoints.get(i);
-                String valueStr = valueToString(i < values.size() ? values.get(i) : null);
-                persistRecord(task, point, valueStr, now);
-                kafkaParts.add(point.getName() + "=" + valueStr);
+                DataValue value = i < values.size() ? values.get(i) : null;
+                String valueStr = valueToString(value);
+                
+                // 优先使用设备产生的时间（源时间戳）
+                LocalDateTime hardwareTime = now;
+                if (value != null) {
+                    // 先尝试获取源时间戳（设备产生的时间）
+                    if (value.getSourceTime() != null) {
+                        try {
+                            hardwareTime = value.getSourceTime().getJavaDate().toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime();
+                            log.debug("使用设备时间戳: {} 点位: {}", hardwareTime, point.getName());
+                        } catch (Exception e) {
+                            log.warn("解析源时间戳失败: {}", e.getMessage());
+                        }
+                    } 
+                    // 再尝试获取服务器时间戳
+                    else if (value.getServerTime() != null) {
+                        try {
+                            hardwareTime = value.getServerTime().getJavaDate().toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime();
+                            log.debug("使用服务器时间戳: {} 点位: {}", hardwareTime, point.getName());
+                        } catch (Exception e) {
+                            log.warn("解析服务器时间戳失败: {}", e.getMessage());
+                        }
+                    }
+                    // 最后才使用本地系统时间
+                    else {
+                        log.debug("使用本地系统时间: {} 点位: {}", hardwareTime, point.getName());
+                    }
+                }
+                
+                // 持久化记录
+                if (valueStr != null && !valueStr.isEmpty()) {
+                    DataRecord record = persistRecord(task, point, valueStr, hardwareTime);
+                    
+                    // 按设备分组
+                    String deviceId = point.getDevId() != null && !point.getDevId().trim().isEmpty()
+                            ? point.getDevId().trim()
+                            : "DEFAULT_DEV";
+                    
+                    deviceDataMap.computeIfAbsent(deviceId, k -> new ArrayList<>()).add(record);
+                } else {
+                    log.warn("任务 {} 点位 {} 读取到空值，跳过存储", task.getId(), point.getName());
+                }
             }
         } catch (Exception e) {
             log.warn("任务 {} OPC UA 读取失败，将尝试重连: {}", task.getId(), e.getMessage());
             disconnectOpcUa(task.getId());
+        }
+    }
+    
+    // 保留原方法用于兼容
+    private void collectOpcUa(Task task, LocalDateTime now, List<String> kafkaParts) {
+        Map<String, List<DataRecord>> deviceDataMap = new HashMap<>();
+        collectOpcUaWithDeviceGroup(task, now, deviceDataMap);
+        
+        // 转换为原格式
+        for (List<DataRecord> records : deviceDataMap.values()) {
+            for (DataRecord record : records) {
+                kafkaParts.add(record.getPointName() + "=" + record.getValue());
+            }
         }
     }
 
@@ -285,15 +497,15 @@ public class TaskExecutorService {
 
     private static String valueToString(DataValue dataValue) {
         if (dataValue == null || dataValue.getValue() == null) {
-            return "";
+            return "null";
         }
         org.eclipse.milo.opcua.stack.core.types.builtin.Variant variant = dataValue.getValue();
         if (variant == null || variant.isNull()) {
-            return "";
+            return "null";
         }
         Object v = variant.getValue();
         if (v == null) {
-            return "";
+            return "null";
         }
         if (v.getClass().isArray()) {
             StringBuilder sb = new StringBuilder();
@@ -312,49 +524,147 @@ public class TaskExecutorService {
         return String.valueOf(v);
     }
 
-    private void collectModbus(Task task, LocalDateTime now, List<String> kafkaParts) {
+    /**
+     * Modbus TCP数据采集（按设备分组）
+     * <p>
+     * 从Modbus TCP服务器读取数据，并按设备ID分组存储
+     * 使用数据读取完成的时间作为时间戳
+     * 
+     * @param task 任务对象
+     * @param now 采集时间
+     * @param deviceDataMap 存储结果的设备分组Map
+     */
+    private void collectModbusWithDeviceGroup(Task task, LocalDateTime now, Map<String, List<DataRecord>> deviceDataMap) {
         String host = task.getModbusHost();
         int port = task.getModbusPort() != null ? task.getModbusPort() : 502;
         int timeout = task.getModbusTimeout() != null ? task.getModbusTimeout() : 3000;
 
         for (TaskPoint point : task.getPoints()) {
             String valueStr;
+            LocalDateTime dataTime = now; // 默认使用当前时间
+            
             try {
-                valueStr = ModbusTcpUtil.readPoint(host, port, timeout, point.getAddress(), point.getDevId(), point.getNodeId(), point.getScaleFactor());
+                String result = ModbusTcpUtil.readPoint(host, port, timeout, point.getAddress(), 
+                        point.getDevId(), point.getNodeId(), point.getDataType(), 
+                        point.getBitLength(), point.getScaleFactor());
+                
+                // 解析结果和时间戳（格式: value|timestamp）
+                if (result.contains("|")) {
+                    String[] parts = result.split("\\|", 2);
+                    valueStr = parts[0];
+                    try {
+                        // 解析时间戳
+                        dataTime = LocalDateTime.parse(parts[1], DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+                        log.debug("使用Modbus数据获取时间: {} 点位: {}", dataTime, point.getName());
+                    } catch (Exception e) {
+                        log.warn("解析Modbus时间戳失败: {}", e.getMessage());
+                    }
+                } else {
+                    valueStr = result;
+                }
             } catch (Exception e) {
                 log.warn("任务 {} Modbus 读点位 {} 失败: {}", task.getId(), point.getName(), e.getMessage());
                 valueStr = "ERROR:" + e.getMessage();
             }
-            persistRecord(task, point, valueStr, now);
-            kafkaParts.add(point.getName() + "=" + valueStr);
+            
+            // 持久化记录
+            DataRecord record = persistRecord(task, point, valueStr, dataTime);
+            
+            // 按设备分组
+            String deviceId = point.getDevId() != null && !point.getDevId().trim().isEmpty()
+                    ? point.getDevId().trim()
+                    : "DEFAULT_DEV";
+            
+            deviceDataMap.computeIfAbsent(deviceId, k -> new ArrayList<>()).add(record);
+        }
+    }
+    
+    // 保留原方法用于兼容
+    private void collectModbus(Task task, LocalDateTime now, List<String> kafkaParts) {
+        Map<String, List<DataRecord>> deviceDataMap = new HashMap<>();
+        collectModbusWithDeviceGroup(task, now, deviceDataMap);
+        
+        // 转换为原格式
+        for (List<DataRecord> records : deviceDataMap.values()) {
+            for (DataRecord record : records) {
+                kafkaParts.add(record.getPointName() + "=" + record.getValue());
+            }
         }
     }
 
-    private void collectSimulated(Task task, LocalDateTime now, List<String> kafkaParts) {
+    /**
+     * 模拟数据采集（按设备分组）
+     * <p>
+     * 生成模拟数据，并按设备ID分组存储
+     * 使用采集时间作为时间戳
+     * 
+     * @param task 任务对象
+     * @param now 采集时间
+     * @param deviceDataMap 存储结果的设备分组Map
+     */
+    private void collectSimulatedWithDeviceGroup(Task task, LocalDateTime now, Map<String, List<DataRecord>> deviceDataMap) {
         for (TaskPoint point : task.getPoints()) {
             String valueStr = generateSimulatedValue(point);
-            persistRecord(task, point, valueStr, now);
-            kafkaParts.add(point.getName() + "=" + valueStr);
+            
+            // 模拟数据使用当前时间作为数据产生时间
+            LocalDateTime simulatedTime = now;
+            
+            // 持久化记录
+            DataRecord record = persistRecord(task, point, valueStr, simulatedTime);
+            
+            // 按设备分组
+            String deviceId = point.getDevId() != null && !point.getDevId().trim().isEmpty()
+                    ? point.getDevId().trim()
+                    : "DEFAULT_DEV";
+            
+            deviceDataMap.computeIfAbsent(deviceId, k -> new ArrayList<>()).add(record);
+        }
+    }
+    
+    // 保留原方法用于兼容
+    private void collectSimulated(Task task, LocalDateTime now, List<String> kafkaParts) {
+        Map<String, List<DataRecord>> deviceDataMap = new HashMap<>();
+        collectSimulatedWithDeviceGroup(task, now, deviceDataMap);
+        
+        // 转换为原格式
+        for (List<DataRecord> records : deviceDataMap.values()) {
+            for (DataRecord record : records) {
+                kafkaParts.add(record.getPointName() + "=" + record.getValue());
+            }
         }
     }
 
-    private void persistRecord(Task task, TaskPoint point, String valueStr, LocalDateTime now) {
-        DataRecord record = new DataRecord();
-        record.setTaskId(task.getId());
-        record.setTaskName(task.getName());
-        record.setPointName(point.getName());
-        record.setProtocolType(task.getProtocolType());
-        record.setAddress(point.getAddress());
-        record.setValue(valueStr);
-        record.setTimestamp(now);
+    private DataRecord persistRecord(Task task, TaskPoint point, String valueStr, LocalDateTime now) {
+        // 保存到数据库
+        com.example.opcua.entity.DataRecord dbRecord = new com.example.opcua.entity.DataRecord();
+        dbRecord.setTaskId(task.getId());
+        dbRecord.setTaskName(task.getName());
+        dbRecord.setPointName(point.getName());
+        dbRecord.setProtocolType(task.getProtocolType());
+        dbRecord.setAddress(point.getAddress());
+        dbRecord.setValue(valueStr);
+        dbRecord.setTimestamp(now);
         
         // 自动判断数据类型
         String dataType = autoDetectDataType(valueStr);
-        record.setDataType(dataType);
-        dataRecordRepository.save(record);
+        dbRecord.setDataType(dataType);
+        dataRecordRepository.save(dbRecord);
+        log.debug("任务 {} 点位 {} 数据已存储: {}", task.getId(), point.getName(), valueStr);
+        
+        // 创建内部DataRecord对象用于Kafka
+        DataRecord kafkaRecord = new DataRecord();
+        kafkaRecord.setPointName(point.getName());
+        kafkaRecord.setNodeId(point.getNodeId());
+        kafkaRecord.setValue(valueStr);
+        kafkaRecord.setTimestamp(now);
+        
+        return kafkaRecord;
     }
 
     private String autoDetectDataType(String value) {
+        if (value == null || value.equalsIgnoreCase("null")) {
+            return "String";
+        }
         try {
             if (value.equalsIgnoreCase("true") || value.equalsIgnoreCase("false")) {
                 return "Boolean";
