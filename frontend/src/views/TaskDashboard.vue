@@ -40,7 +40,7 @@
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import axios from 'axios'
+// 使用原生Fetch API替代axios
 
 const API_BASE = '/api'
 
@@ -64,9 +64,10 @@ export default {
 
     const loadTaskInfo = async () => {
       try {
-        const res = await axios.get(`${API_BASE}/tasks/${taskId}`)
-        if (res.data.success) {
-          const task = res.data.data
+        const response = await fetch(`${API_BASE}/tasks/${taskId}`)
+        const res = await response.json()
+        if (res.success) {
+          const task = res.data
           taskName.value = task.name
           taskStatus.value = task.status
           stats.value[0].value = task.points ? String(task.points.length) : '0'
@@ -79,9 +80,10 @@ export default {
 
     const loadStatistics = async () => {
       try {
-        const res = await axios.get(`${API_BASE}/tasks/${taskId}/statistics`)
-        if (res.data.success && res.data.data) {
-          stats.value[1].value = String(res.data.data.totalRecords ?? 0)
+        const response = await fetch(`${API_BASE}/tasks/${taskId}/statistics`)
+        const res = await response.json()
+        if (res.success && res.data) {
+          stats.value[1].value = String(res.data.totalRecords ?? 0)
         }
       } catch (e) {
         console.error('加载统计失败', e)
@@ -92,11 +94,12 @@ export default {
 
     const loadLatestData = async () => {
       try {
-        const res = await axios.get(`${API_BASE}/tasks/${taskId}/data`)
-        if (res.data.success && res.data.data) {
-          latestData.value = res.data.data.slice(0, 20)
-          if (res.data.data.length > 0) {
-            stats.value[2].value = res.data.data[0].timestamp
+        const response = await fetch(`${API_BASE}/tasks/${taskId}/data`)
+        const res = await response.json()
+        if (res.success && res.data) {
+          latestData.value = res.data.slice(0, 20)
+          if (res.data.length > 0) {
+            stats.value[2].value = res.data[0].timestamp
           }
         }
       } catch (e) {

@@ -63,7 +63,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import axios from 'axios'
+// 使用原生Fetch API替代axios
 
 const API_BASE = '/api'
 
@@ -77,9 +77,10 @@ export default {
     const fetchTasks = async () => {
       loading.value = true
       try {
-        const res = await axios.get(`${API_BASE}/tasks`)
-        if (res.data.success) {
-          tasks.value = res.data.data
+        const response = await fetch(`${API_BASE}/tasks`)
+        const res = await response.json()
+        if (res.success) {
+          tasks.value = res.data
         }
       } catch (e) {
         ElMessage.error('获取任务列表失败')
@@ -102,12 +103,18 @@ export default {
 
     const startTask = async (task) => {
       try {
-        const res = await axios.post(`${API_BASE}/tasks/${task.id}/start`)
-        if (res.data.success) {
+        const response = await fetch(`${API_BASE}/tasks/${task.id}/start`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          }
+        })
+        const res = await response.json()
+        if (res.success) {
           ElMessage.success(`任务 "${task.name}" 已启动`)
           fetchTasks()
         } else {
-          ElMessage.error(res.data.message || '启动失败')
+          ElMessage.error(res.message || '启动失败')
         }
       } catch (e) {
         ElMessage.error('启动任务失败')
@@ -116,12 +123,18 @@ export default {
 
     const stopTask = async (task) => {
       try {
-        const res = await axios.post(`${API_BASE}/tasks/${task.id}/stop`)
-        if (res.data.success) {
+        const response = await fetch(`${API_BASE}/tasks/${task.id}/stop`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          }
+        })
+        const res = await response.json()
+        if (res.success) {
           ElMessage.success(`任务 "${task.name}" 已停止`)
           fetchTasks()
         } else {
-          ElMessage.error(res.data.message || '停止失败')
+          ElMessage.error(res.message || '停止失败')
         }
       } catch (e) {
         ElMessage.error('停止任务失败')
@@ -135,10 +148,18 @@ export default {
           '确认删除',
           { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
         )
-        const res = await axios.delete(`${API_BASE}/tasks/${task.id}`)
-        if (res.data.success) {
+        const response = await fetch(`${API_BASE}/tasks/${task.id}`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+          }
+        })
+        const res = await response.json()
+        if (res.success) {
           ElMessage.success('任务已删除')
           fetchTasks()
+        } else {
+          ElMessage.error(res.message || '删除失败')
         }
       } catch (e) {
         if (e !== 'cancel') {

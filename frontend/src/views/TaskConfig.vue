@@ -187,7 +187,7 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import axios from 'axios'
+// 使用原生Fetch API替代axios
 
 const API_BASE = '/api'
 
@@ -313,17 +313,31 @@ export default {
         data.points = form.points.map((p, i) => ({ ...p, sortOrder: i + 1 }))
 
         let res
+        let response
         if (isEdit.value) {
-          res = await axios.put(`${API_BASE}/tasks/${route.params.id}`, data)
+          response = await fetch(`${API_BASE}/tasks/${route.params.id}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(data)
+          })
         } else {
-          res = await axios.post(`${API_BASE}/tasks`, data)
+          response = await fetch(`${API_BASE}/tasks`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(data)
+          })
         }
+        res = await response.json()
 
-        if (res.data.success) {
+        if (res.success) {
           ElMessage.success(isEdit.value ? '任务更新成功' : '任务创建成功')
           router.push('/')
         } else {
-          ElMessage.error(res.data.message || '保存失败')
+          ElMessage.error(res.message || '保存失败')
         }
       } catch (e) {
         ElMessage.error('保存任务失败')
@@ -343,9 +357,13 @@ export default {
             if (protocol === 'MODBUS_TCP') {
               protocol = 'MODBUS'
             }
-            const res = await axios.get(API_BASE + '/tasks/template?protocol=' + protocol, {
-              responseType: 'blob'
+            const response = await fetch(API_BASE + '/tasks/template?protocol=' + protocol, {
+              method: 'GET',
+              headers: {
+                'Accept': 'application/octet-stream',
+              }
             })
+            const res = { data: await response.blob() }
             const url = window.URL.createObjectURL(new Blob([res.data]))
             const link = document.createElement('a')
             link.href = url
@@ -363,12 +381,14 @@ export default {
       fd.append('file', options.file)
       try {
         // 统一使用预览模式解析，然后在前端合并，避免加载已删除的点位
-        const res = await axios.post(`${API_BASE}/tasks/import/preview`, fd, {
-          headers: { 'Content-Type': 'multipart/form-data' }
+        const response = await fetch(`${API_BASE}/tasks/import/preview`, {
+          method: 'POST',
+          body: fd
         })
-        if (res.data.success && Array.isArray(res.data.data)) {
-          const start = form.points.length
-          res.data.data.forEach((p, i) => {
+        const res = await response.json()
+        if (res.success && Array.isArray(res.data)) {
+            const start = form.points.length
+            res.data.forEach((p, i) => {
             const point = {
               name: p.name || '',
               address: p.address || '',
@@ -383,9 +403,9 @@ export default {
             }
             form.points.push(point)
           })
-          ElMessage.success(res.data.message || '已合并到列表')
-        } else {
-          ElMessage.error(res.data.message || '解析失败')
+          ElMessage.success(res.message || '已合并到列表')
+          } else {
+            ElMessage.error(res.message || '解析失败')
         }
       } catch (e) {
         ElMessage.error('上传失败')
@@ -398,9 +418,10 @@ export default {
       isEdit.value = true
       loading.value = true
       try {
-        const res = await axios.get(`${API_BASE}/tasks/${id}`)
-        if (res.data.success) {
-          const task = res.data.data
+        const response = await fetch(`${API_BASE}/tasks/${id}`)
+        const res = await response.json()
+        if (res.success) {
+          const task = res.data
           Object.keys(form).forEach(key => {
             if (key !== 'points' && task[key] !== undefined && task[key] !== null) {
               form[key] = task[key]
