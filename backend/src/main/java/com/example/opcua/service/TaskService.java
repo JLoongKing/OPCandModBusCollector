@@ -120,8 +120,10 @@ public class TaskService {
         existing.setModbusScanInterval(updatedTask.getModbusScanInterval());
 
         existing.setKafkaEnabled(updatedTask.getKafkaEnabled());
+        existing.setKafkaClusterUrl(updatedTask.getKafkaClusterUrl());
         existing.setKafkaBootstrapServers(updatedTask.getKafkaBootstrapServers());
         existing.setKafkaTopic(updatedTask.getKafkaTopic());
+        existing.setKafkaKey(updatedTask.getKafkaKey());
         existing.setKafkaAcks(updatedTask.getKafkaAcks());
         existing.setKafkaRetries(updatedTask.getKafkaRetries());
         existing.setKafkaBatchSize(updatedTask.getKafkaBatchSize());

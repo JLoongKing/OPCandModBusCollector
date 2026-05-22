@@ -72,11 +72,17 @@ public class Task {
     @Column(name = "kafka_enabled")
     private Boolean kafkaEnabled;
 
+    @Column(name = "kafka_cluster_url", length = 255)
+    private String kafkaClusterUrl;
+
     @Column(name = "kafka_bootstrap_servers", length = 255)
     private String kafkaBootstrapServers;
 
     @Column(name = "kafka_topic", length = 100)
     private String kafkaTopic;
+
+    @Column(name = "kafka_key", length = 255)
+    private String kafkaKey;
 
     @Column(name = "kafka_acks", length = 10)
     private String kafkaAcks;

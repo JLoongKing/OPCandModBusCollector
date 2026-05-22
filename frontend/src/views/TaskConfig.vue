@@ -90,8 +90,27 @@
         </el-space>
       </el-form-item>
       <el-form-item label="采集点位">
-        <el-button type="primary" size="small" @click="addPoint">添加点位</el-button>
-        <el-table :data="form.points" border stripe style="margin-top: 10px;" empty-text="暂无点位，请添加">
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <el-button type="primary" size="small" @click="addPoint">添加点位</el-button>
+          <el-button
+            type="danger"
+            size="small"
+            :disabled="selectedPoints.length === 0"
+            @click="removeSelectedPoints"
+          >
+            批量删除 {{ selectedPoints.length > 0 ? '(' + selectedPoints.length + ')' : '' }}
+          </el-button>
+        </div>
+        <el-table
+          ref="pointsTableRef"
+          :data="form.points"
+          border
+          stripe
+          style="margin-top: 10px;"
+          empty-text="暂无点位，请添加"
+          @selection-change="onPointsSelectionChange"
+        >
+          <el-table-column type="selection" width="45" />
           <el-table-column label="点位名称" min-width="120">
             <template #default="{ row, $index }">
               <el-input v-model="row.name" placeholder="如：温度" size="small" />
@@ -148,11 +167,14 @@
         <el-switch v-model="form.kafkaEnabled" />
       </el-form-item>
       <template v-if="form.kafkaEnabled">
-        <el-form-item label="Bootstrap Servers" prop="kafkaBootstrapServers">
-          <el-input v-model="form.kafkaBootstrapServers" placeholder="localhost:9092" />
+        <el-form-item label="Kafka集群地址" prop="kafkaBootstrapServers">
+          <el-input v-model="form.kafkaBootstrapServers" placeholder="如：localhost:9092 或 kafka-cluster:9092" />
         </el-form-item>
         <el-form-item label="Topic" prop="kafkaTopic">
           <el-input v-model="form.kafkaTopic" placeholder="请输入Topic名称" />
+        </el-form-item>
+        <el-form-item label="消息Key">
+          <el-input v-model="form.kafkaKey" placeholder="用于消息路由的Key，可选" />
         </el-form-item>
         <el-form-item label="Acks">
           <el-select v-model="form.kafkaAcks" placeholder="请选择">
@@ -197,9 +219,11 @@ export default {
     const router = useRouter()
     const route = useRoute()
     const formRef = ref(null)
-    const loading = ref(false)
-    const submitting = ref(false)
-    const isEdit = ref(false)
+            const pointsTableRef = ref(null)
+            const loading = ref(false)
+            const submitting = ref(false)
+            const isEdit = ref(false)
+            const selectedPoints = ref([])
 
     const form = reactive({
       name: '',
@@ -220,6 +244,7 @@ export default {
       kafkaEnabled: false,
       kafkaBootstrapServers: 'localhost:9092',
       kafkaTopic: '',
+      kafkaKey: '',
       kafkaAcks: '1',
       kafkaRetries: 3,
       kafkaBatchSize: 16384,
@@ -258,7 +283,7 @@ export default {
         r.modbusPort = [{ required: true, message: '请输入Modbus端口号', trigger: 'blur' }]
       }
       if (form.kafkaEnabled) {
-        r.kafkaBootstrapServers = [{ required: true, message: '请输入Kafka Bootstrap Servers', trigger: 'blur' }]
+        r.kafkaBootstrapServers = [{ required: true, message: '请输入Kafka集群地址', trigger: 'blur' }]
         r.kafkaTopic = [{ required: true, message: '请输入Kafka Topic', trigger: 'blur' }]
       }
       return r
@@ -291,6 +316,20 @@ export default {
 
     const removePoint = (index) => {
       form.points.splice(index, 1)
+    }
+
+    const onPointsSelectionChange = (rows) => {
+      selectedPoints.value = rows
+    }
+
+    const removeSelectedPoints = () => {
+      if (selectedPoints.value.length === 0) {
+        ElMessage.warning('请先选择要删除的点位')
+        return
+      }
+      form.points = form.points.filter(p => !selectedPoints.value.includes(p))
+      ElMessage.success(`已删除 ${selectedPoints.value.length} 个点位`)
+      selectedPoints.value = []
     }
 
     const submitForm = async () => {
@@ -381,7 +420,7 @@ export default {
       fd.append('file', options.file)
       try {
         // 统一使用预览模式解析，然后在前端合并，避免加载已删除的点位
-        const response = await fetch(`${API_BASE}/tasks/import/preview`, {
+        const response = await fetch(`${API_BASE}/tasks/preview-import`, {
           method: 'POST',
           body: fd
         })
@@ -442,8 +481,9 @@ export default {
 
     return {
       formRef, form, rules, loading, submitting, isEdit,
-      onProtocolChange, addPoint, removePoint, submitForm, goBack,
-      downloadTemplate, handleExcelUpload
+      onProtocolChange, addPoint, removePoint, removeSelectedPoints, onPointsSelectionChange,
+              submitForm, goBack, downloadTemplate, handleExcelUpload,
+              selectedPoints, pointsTableRef
     }
   }
 }

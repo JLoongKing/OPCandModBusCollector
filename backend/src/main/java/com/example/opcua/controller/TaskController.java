@@ -1,14 +1,13 @@
 package com.example.opcua.controller;
 
-import com.example.opcua.entity.DataRecord;
 import com.example.opcua.entity.Task;
 import com.example.opcua.entity.TaskPoint;
-import com.example.opcua.repository.DataRecordRepository;
 import com.example.opcua.service.PointService;
 import com.example.opcua.service.TaskExecutorService;
 import com.example.opcua.service.TaskService;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.ss.usermodel.DateUtil;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -59,9 +58,6 @@ public class TaskController {
     private TaskExecutorService taskExecutorService;
 
     @Autowired
-    private DataRecordRepository dataRecordRepository;
-
-    @Autowired
     private PointService pointService;
 
     /**
@@ -75,6 +71,77 @@ public class TaskController {
         result.put("success", true);
         result.put("data", taskService.getAllTasks());
         return result;
+    }
+    
+    /**
+     * 获取单元格值作为字符串，自动处理不同类型的单元格
+     * 
+     * @param cell 单元格
+     * @return 单元格值的字符串表示
+     */
+    private String getCellValueAsString(Cell cell) {
+        if (cell == null) {
+            return "";
+        }
+        
+        try {
+            switch (cell.getCellType()) {
+                case STRING:
+                    return cell.getStringCellValue();
+                case NUMERIC:
+                    if (DateUtil.isCellDateFormatted(cell)) {
+                        return cell.getDateCellValue().toString();
+                    } else {
+                        double numericValue = cell.getNumericCellValue();
+                        if (numericValue == (long) numericValue) {
+                            return String.valueOf((long) numericValue);
+                        } else {
+                            return String.valueOf(numericValue);
+                        }
+                    }
+                case BOOLEAN:
+                    return String.valueOf(cell.getBooleanCellValue());
+                case FORMULA:
+                    FormulaEvaluator evaluator = cell.getSheet().getWorkbook().getCreationHelper().createFormulaEvaluator();
+                    CellValue cellValue = evaluator.evaluate(cell);
+                    return getCellValueFromCellValue(cellValue);
+                case BLANK:
+                    return "";
+                default:
+                    return "";
+            }
+        } catch (Exception e) {
+            log.error("获取单元格值失败", e);
+            return "";
+        }
+    }
+    
+    /**
+     * 获取CellValue对象的值作为字符串
+     * 
+     * @param cellValue CellValue对象
+     * @return 字符串值
+     */
+    private String getCellValueFromCellValue(CellValue cellValue) {
+        if (cellValue == null) {
+            return "";
+        }
+        
+        switch (cellValue.getCellType()) {
+            case STRING:
+                return cellValue.getStringValue();
+            case NUMERIC:
+                double numericValue = cellValue.getNumberValue();
+                if (numericValue == (long) numericValue) {
+                    return String.valueOf((long) numericValue);
+                } else {
+                    return String.valueOf(numericValue);
+                }
+            case BOOLEAN:
+                return String.valueOf(cellValue.getBooleanValue());
+            default:
+                return "";
+        }
     }
 
     /**
@@ -239,32 +306,26 @@ public class TaskController {
     @GetMapping("/{id}/data")
     public Map<String, Object> getTaskData(@PathVariable Long id) {
         Map<String, Object> result = new HashMap<>();
-        List<DataRecord> records = dataRecordRepository.findByTaskIdOrderByTimestampDesc(id);
-        log.info("查询到任务 {} 的数据记录数: {}", id, records.size());
-        
-        // 转换为前端友好的格式
+        List<TaskExecutorService.DataCacheEntry> entries = taskExecutorService.getCacheData(id, null);
+        log.info("任务 {} 从缓存查询到数据记录数: {}", id, entries.size());
+
         List<Map<String, Object>> dataList = new ArrayList<>();
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-        
-        for (DataRecord record : records) {
+
+        for (TaskExecutorService.DataCacheEntry entry : entries) {
             Map<String, Object> dataMap = new HashMap<>();
-            dataMap.put("id", record.getId());
-            dataMap.put("taskId", record.getTaskId());
-            dataMap.put("taskName", record.getTaskName() != null ? record.getTaskName() : "");
-            dataMap.put("pointName", record.getPointName() != null ? record.getPointName() : "");
-            dataMap.put("protocolType", record.getProtocolType() != null ? record.getProtocolType() : "");
-            dataMap.put("address", record.getAddress() != null ? record.getAddress() : "");
-            dataMap.put("value", record.getValue() != null ? record.getValue() : "");
-            dataMap.put("dataType", record.getDataType() != null ? record.getDataType() : "");
-            dataMap.put("timestamp", record.getTimestamp() != null ? record.getTimestamp().format(formatter) : "");
+            dataMap.put("id", System.currentTimeMillis());
+            dataMap.put("taskId", entry.getTaskId());
+            dataMap.put("taskName", entry.getTaskName() != null ? entry.getTaskName() : "");
+            dataMap.put("pointName", entry.getPointName() != null ? entry.getPointName() : "");
+            dataMap.put("protocolType", entry.getProtocolType() != null ? entry.getProtocolType() : "");
+            dataMap.put("address", entry.getAddress() != null ? entry.getAddress() : "");
+            dataMap.put("value", entry.getValue() != null ? entry.getValue() : "");
+            dataMap.put("dataType", entry.getDataType() != null ? entry.getDataType() : "");
+            dataMap.put("timestamp", entry.getTimestamp() != null ? entry.getTimestamp().format(formatter) : "");
             dataList.add(dataMap);
         }
-        
-        if (!dataList.isEmpty()) {
-            log.info("第一条记录: pointName={}, value={}, timestamp={}", 
-                    dataList.get(0).get("pointName"), dataList.get(0).get("value"), dataList.get(0).get("timestamp"));
-        }
-        
+
         result.put("success", true);
         result.put("data", dataList.stream().limit(100).collect(Collectors.toList()));
         return result;
@@ -282,86 +343,41 @@ public class TaskController {
             @PathVariable Long id,
             @RequestParam(defaultValue = "120") int seconds) {
         Map<String, Object> result = new HashMap<>();
-        LocalDateTime endTime = LocalDateTime.now();
-        LocalDateTime startTime = endTime.minusSeconds(seconds);
+        List<TaskExecutorService.DataCacheEntry> entries = taskExecutorService.getCacheData(id, (long) seconds);
+        log.info("任务 {} 从缓存查询图表数据: 时间范围 {} 秒, 记录数: {}", id, seconds, entries.size());
 
-        List<DataRecord> records = dataRecordRepository.findByTaskIdAndTimestampBetweenOrderByTimestampDesc(
-                id, startTime, endTime);
-        
-        log.info("查询任务 {} 图表数据: 时间范围 {} 秒, 记录数: {}", id, seconds, records.size());
-        if (!records.isEmpty()) {
-            log.info("第一条记录: pointName={}, value={}, timestamp={}", 
-                    records.get(0).getPointName(), records.get(0).getValue(), records.get(0).getTimestamp());
-        }
-
-        // 过滤掉无效记录（时间戳为null或值为null的记录）
-        List<DataRecord> validRecords = records.stream()
-                .filter(record -> record.getTimestamp() != null)
-                .filter(record -> record.getValue() != null && !record.getValue().equals("null"))
-                .collect(Collectors.toList());
-        
-        log.info("有效记录数: {}", validRecords.size());
-
-        // 按点位分组
-        Map<String, List<DataRecord>> pointGroups = validRecords.stream()
-                .collect(Collectors.groupingBy(DataRecord::getPointName));
-        
-        log.info("点位分组数: {}", pointGroups.size());
+        Map<String, List<TaskExecutorService.DataCacheEntry>> pointGroups = entries.stream()
+                .collect(Collectors.groupingBy(e -> e.getPointName() != null ? e.getPointName() : "unknown"));
 
         Map<String, Object> chartData = new HashMap<>();
-        List<String> timestamps = new ArrayList<>();
-
-        // 提取时间戳
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-        if (!validRecords.isEmpty()) {
-            timestamps = validRecords.stream()
-                    .map(record -> record.getTimestamp().format(formatter))
-                    .distinct()
-                    .sorted()
-                    .collect(Collectors.toList());
-            
-            log.info("时间戳数量: {}", timestamps.size());
-            if (!timestamps.isEmpty()) {
-                log.info("时间戳范围: {} 到 {}", timestamps.get(0), timestamps.get(timestamps.size() - 1));
-            }
-        }
 
-        // 确保时间戳不为null
-        if (timestamps == null) {
-            timestamps = new ArrayList<>();
-        }
+        List<String> timestamps = entries.stream()
+                .map(e -> e.getTimestamp())
+                .filter(t -> t != null)
+                .map(t -> t.format(formatter))
+                .distinct()
+                .sorted()
+                .collect(Collectors.toList());
+
         chartData.put("timestamps", timestamps);
 
-        // 为每个点位创建数据系列
-        for (Map.Entry<String, List<DataRecord>> entry : pointGroups.entrySet()) {
-            String pointName = entry.getKey();
-            List<DataRecord> pointRecords = entry.getValue();
-            
-            log.info("点位 {} 的有效记录数: {}", pointName, pointRecords.size());
-
+        for (Map.Entry<String, List<TaskExecutorService.DataCacheEntry>> groupEntry : pointGroups.entrySet()) {
+            String pointName = groupEntry.getKey();
+            List<TaskExecutorService.DataCacheEntry> pointEntries = groupEntry.getValue();
             List<Object> values = new ArrayList<>();
-            for (String timestamp : timestamps) {
-                DataRecord record = pointRecords.stream()
-                        .filter(r -> r.getTimestamp().format(formatter).equals(timestamp))
-                        .findFirst().orElse(null);
-                
-                // 如果没有找到记录，返回空字符串而不是null
-                Object value = record != null ? record.getValue() : "";
-                values.add(value);
-                
-                if (record != null) {
-                    log.debug("点位 {} 在时间 {} 的值: {}", pointName, timestamp, value);
-                }
+            for (String ts : timestamps) {
+                String val = pointEntries.stream()
+                        .filter(e -> e.getTimestamp() != null && e.getTimestamp().format(formatter).equals(ts))
+                        .map(e -> e.getValue())
+                        .findFirst().orElse("");
+                values.add(val);
             }
-
             chartData.put(pointName, values);
-            log.info("点位 {} 的数据系列长度: {}", pointName, values.size());
         }
 
         result.put("success", true);
         result.put("data", chartData);
-        log.info("返回图表数据: timestamps={}, series={}", 
-                chartData.get("timestamps"), chartData.keySet().stream().filter(k -> !"timestamps".equals(k)).collect(Collectors.toList()));
         return result;
     }
     
@@ -375,35 +391,25 @@ public class TaskController {
     @GetMapping("/point/detail")
     public Map<String, Object> getPointDetail(
             @RequestParam String pointName,
-            @RequestParam(defaultValue = "3600") int seconds) {
+            @RequestParam(defaultValue = "120") int seconds) {
         Map<String, Object> result = new HashMap<>();
-        LocalDateTime endTime = LocalDateTime.now();
-        LocalDateTime startTime = endTime.minusSeconds(seconds);
+        List<TaskExecutorService.DataCacheEntry> entries = taskExecutorService.getCacheDataByPointName(pointName, (long) seconds);
+        log.info("点位 {} 从缓存查询详情数据: 时间范围 {} 秒, 记录数: {}", pointName, seconds, entries.size());
 
-        List<DataRecord> records = dataRecordRepository.findByPointNameAndTimestampBetween(
-                pointName, startTime, endTime);
-        
-        log.info("查询点位 {} 详情数据: 时间范围 {} 秒, 记录数: {}", pointName, seconds, records.size());
-        if (!records.isEmpty()) {
-            log.info("第一条记录: value={}, timestamp={}", 
-                    records.get(0).getValue(), records.get(0).getTimestamp());
-        }
-
-        // 转换为前端友好的格式
         List<Map<String, Object>> dataList = new ArrayList<>();
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-        
-        for (DataRecord record : records) {
+
+        for (TaskExecutorService.DataCacheEntry entry : entries) {
             Map<String, Object> dataMap = new HashMap<>();
-            dataMap.put("id", record.getId());
-            dataMap.put("taskId", record.getTaskId());
-            dataMap.put("taskName", record.getTaskName());
-            dataMap.put("pointName", record.getPointName());
-            dataMap.put("protocolType", record.getProtocolType());
-            dataMap.put("address", record.getAddress());
-            dataMap.put("value", record.getValue());
-            dataMap.put("dataType", record.getDataType());
-            dataMap.put("timestamp", record.getTimestamp() != null ? record.getTimestamp().format(formatter) : null);
+            dataMap.put("id", System.currentTimeMillis());
+            dataMap.put("taskId", entry.getTaskId());
+            dataMap.put("taskName", entry.getTaskName());
+            dataMap.put("pointName", entry.getPointName());
+            dataMap.put("protocolType", entry.getProtocolType());
+            dataMap.put("address", entry.getAddress());
+            dataMap.put("value", entry.getValue());
+            dataMap.put("dataType", entry.getDataType());
+            dataMap.put("timestamp", entry.getTimestamp() != null ? entry.getTimestamp().format(formatter) : null);
             dataList.add(dataMap);
         }
 
@@ -421,67 +427,51 @@ public class TaskController {
     @GetMapping("/{id}/statistics")
     public Map<String, Object> getTaskStatistics(@PathVariable Long id) {
         Map<String, Object> result = new HashMap<>();
-        
-        // 查询最近1小时的数据
-        LocalDateTime endTime = LocalDateTime.now();
-        LocalDateTime startTime = endTime.minusHours(1);
-        
-        List<DataRecord> records = dataRecordRepository.findByTaskIdAndTimestampBetweenOrderByTimestampDesc(
-                id, startTime, endTime);
-        
-        log.info("查询任务 {} 统计数据: 最近1小时, 记录数: {}", id, records.size());
-        
-        // 过滤掉无效记录
-        List<DataRecord> validRecords = records.stream()
-                .filter(record -> record.getTimestamp() != null)
-                .filter(record -> record.getValue() != null && !record.getValue().equals("null"))
-                .collect(Collectors.toList());
-        
-        log.info("有效记录数: {}", validRecords.size());
-        
-        // 按点位分组
-        Map<String, List<DataRecord>> pointGroups = validRecords.stream()
-                .collect(Collectors.groupingBy(DataRecord::getPointName));
-        
+        List<TaskExecutorService.DataCacheEntry> entries = taskExecutorService.getCacheData(id, 3600L);
+        log.info("任务 {} 从缓存查询统计数据: 记录数: {}", id, entries.size());
+
+        Map<String, List<TaskExecutorService.DataCacheEntry>> pointGroups = entries.stream()
+                .collect(Collectors.groupingBy(e -> e.getPointName() != null ? e.getPointName() : "unknown"));
+
         Map<String, Object> statisticsData = new HashMap<>();
         List<Map<String, Object>> pointStatsList = new ArrayList<>();
-        
-        for (Map.Entry<String, List<DataRecord>> entry : pointGroups.entrySet()) {
-            String pointName = entry.getKey();
-            List<DataRecord> pointRecords = entry.getValue();
-            
-            if (pointRecords.isEmpty()) {
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+        for (Map.Entry<String, List<TaskExecutorService.DataCacheEntry>> groupEntry : pointGroups.entrySet()) {
+            String pointName = groupEntry.getKey();
+            List<TaskExecutorService.DataCacheEntry> pointEntries = groupEntry.getValue();
+
+            if (pointEntries.isEmpty()) {
                 continue;
             }
-            
-            // 计算统计值
-            List<Double> values = pointRecords.stream()
-                    .map(r -> {
+
+            List<Double> values = pointEntries.stream()
+                    .map(e -> {
                         try {
-                            return Double.parseDouble(r.getValue());
-                        } catch (NumberFormatException e) {
+                            return Double.parseDouble(e.getValue());
+                        } catch (NumberFormatException ex) {
                             return null;
                         }
                     })
                     .filter(Objects::nonNull)
                     .collect(Collectors.toList());
-            
+
             Map<String, Object> pointStats = new HashMap<>();
             pointStats.put("pointName", pointName);
-            pointStats.put("recordCount", pointRecords.size());
+            pointStats.put("recordCount", pointEntries.size());
             pointStats.put("validCount", values.size());
-            
+
             if (!values.isEmpty()) {
                 double min = Collections.min(values);
                 double max = Collections.max(values);
                 double avg = values.stream().mapToDouble(Double::doubleValue).average().orElse(0);
                 double latest = values.get(values.size() - 1);
-                
+
                 pointStats.put("min", min);
                 pointStats.put("max", max);
                 pointStats.put("avg", avg);
                 pointStats.put("latest", latest);
-                pointStats.put("unit", ""); // 可以根据实际情况添加单位
+                pointStats.put("unit", "");
             } else {
                 pointStats.put("min", 0);
                 pointStats.put("max", 0);
@@ -489,24 +479,22 @@ public class TaskController {
                 pointStats.put("latest", 0);
                 pointStats.put("unit", "");
             }
-            
-            // 获取最新的时间戳
-            DataRecord latestRecord = pointRecords.get(0);
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-            String latestTime = latestRecord.getTimestamp() != null ? latestRecord.getTimestamp().format(formatter) : "";
-            pointStats.put("timestamp", latestTime); // 修改为timestamp字段，而不是latestTime
-            pointStats.put("latestTime", latestTime); // 保留原来的字段，兼容旧版本
-            
+
+            TaskExecutorService.DataCacheEntry latestEntry = pointEntries.get(pointEntries.size() - 1);
+            String latestTime = latestEntry.getTimestamp() != null ? latestEntry.getTimestamp().format(formatter) : "";
+            pointStats.put("timestamp", latestTime);
+            pointStats.put("latestTime", latestTime);
+
             pointStatsList.add(pointStats);
         }
-        
+
         statisticsData.put("taskId", id);
-        statisticsData.put("totalRecords", records.size());
-        statisticsData.put("validRecords", validRecords.size());
+        statisticsData.put("totalRecords", taskExecutorService.getDataCount(id));
+        statisticsData.put("validRecords", entries.size());
         statisticsData.put("pointCount", pointGroups.size());
         statisticsData.put("pointStatistics", pointStatsList);
-        statisticsData.put("updateTime", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
-        
+        statisticsData.put("updateTime", LocalDateTime.now().format(formatter));
+
         result.put("success", true);
         result.put("data", statisticsData);
         return result;
@@ -785,24 +773,34 @@ public class TaskController {
                 }
 
                 Map<String, Object> point = new HashMap<>();
-                point.put("pointName", row.getCell(0).getStringCellValue().trim());
-                point.put("address", row.getCell(1).getStringCellValue().trim());
+                point.put("name", getCellValueAsString(row.getCell(0)).trim());
+                point.put("address", getCellValueAsString(row.getCell(1)).trim());
 
                 // 处理可选字段
                 if (row.getCell(2) != null) {
-                    point.put("devId", row.getCell(2).getStringCellValue().trim());
+                    point.put("devId", getCellValueAsString(row.getCell(2)).trim());
                 }
                 if (row.getCell(3) != null) {
-                    point.put("nodeId", row.getCell(3).getStringCellValue().trim());
+                    point.put("nodeId", getCellValueAsString(row.getCell(3)).trim());
                 }
                 if (row.getCell(4) != null) {
-                    point.put("dataType", row.getCell(4).getStringCellValue().trim());
+                    point.put("dataType", getCellValueAsString(row.getCell(4)).trim());
                 }
                 if (row.getCell(5) != null) {
-                    point.put("bitLength", (int) row.getCell(5).getNumericCellValue());
+                    String bitLengthStr = getCellValueAsString(row.getCell(5));
+                    try {
+                        point.put("bitLength", Integer.parseInt(bitLengthStr));
+                    } catch (NumberFormatException e) {
+                        log.warn("位数解析失败: {}", bitLengthStr);
+                    }
                 }
                 if (row.getCell(6) != null) {
-                    point.put("scaleFactor", row.getCell(6).getNumericCellValue());
+                    String scaleFactorStr = getCellValueAsString(row.getCell(6));
+                    try {
+                        point.put("scaleFactor", Double.parseDouble(scaleFactorStr));
+                    } catch (NumberFormatException e) {
+                        log.warn("比例系数解析失败: {}", scaleFactorStr);
+                    }
                 }
 
                 points.add(point);

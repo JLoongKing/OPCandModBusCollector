@@ -3,8 +3,10 @@ package com.example.opcua.service;
 import com.example.opcua.entity.DataRecord;
 import com.example.opcua.entity.Task;
 import com.example.opcua.entity.TaskPoint;
-import com.example.opcua.repository.DataRecordRepository;
 import com.example.opcua.repository.TaskRepository;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.milo.opcua.sdk.client.OpcUaClient;
 import org.eclipse.milo.opcua.sdk.client.api.config.OpcUaClientConfig;
@@ -26,11 +28,12 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
+import java.math.BigDecimal;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -42,7 +45,7 @@ import java.util.concurrent.TimeUnit;
 public class TaskExecutorService {
 
     @Autowired
-    private DataRecordRepository dataRecordRepository;
+    private DataRecordService dataRecordService;
 
     @Autowired
     private TaskRepository taskRepository;
@@ -54,6 +57,9 @@ public class TaskExecutorService {
     private final Map<Long, ScheduledExecutorService> taskExecutors = new ConcurrentHashMap<>();
     private final Map<Long, OpcUaClient> opcUaClients = new ConcurrentHashMap<>();
     private final Random random = new Random();
+
+    private final Map<Long, List<DataCacheEntry>> dataCache = new ConcurrentHashMap<>();
+    private final Map<Long, BigDecimal> dataCount = new ConcurrentHashMap<>();
     
     /**
      * 数据记录内部类，用于Kafka报文构建
@@ -106,6 +112,22 @@ public class TaskExecutorService {
         }
     }
 
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class DataCacheEntry {
+        private Long taskId;
+        private String taskName;
+        private String pointName;
+        private String nodeId;
+        private String protocolType;
+        private String address;
+        private String value;
+        private String dataType;
+        private String devId;
+        private LocalDateTime timestamp;
+    }
+
     public void startTask(Task task) {
         Long taskId = task.getId();
         if (runningTasks.containsKey(taskId)) {
@@ -135,7 +157,8 @@ public class TaskExecutorService {
                 }
                 collectData(latest);
             } catch (Exception e) {
-                log.error("任务 {} 数据采集异常: {}", taskId, e.getMessage());
+                log.error("任务 {} 数据采集异常 - 错误类型: {}, 错误信息: {}",
+                        taskId, e.getClass().getName(), e.getMessage(), e);
             }
         }, 0, scanInterval, TimeUnit.MILLISECONDS);
 
@@ -173,10 +196,13 @@ public class TaskExecutorService {
     private void disconnectOpcUa(Long taskId) {
         OpcUaClient client = opcUaClients.remove(taskId);
         if (client != null) {
+            log.info("任务 {} 正在断开OPC UA连接...", taskId);
             try {
                 client.disconnect().get(5, TimeUnit.SECONDS);
+                log.info("任务 {} OPC UA连接已断开", taskId);
             } catch (Exception e) {
-                log.debug("断开 OPC UA 客户端: {}", e.getMessage());
+                log.warn("任务 {} 断开OPC UA连接异常 - 错误类型: {}, 错误信息: {}",
+                        taskId, e.getClass().getName(), e.getMessage());
             }
         }
     }
@@ -207,16 +233,10 @@ public class TaskExecutorService {
 
         if (Boolean.TRUE.equals(task.getKafkaEnabled()) && kafkaProducerService != null && !deviceDataMap.isEmpty()) {
             try {
-                String topic = task.getKafkaTopic() != null && !task.getKafkaTopic().isEmpty()
-                        ? task.getKafkaTopic()
-                        : "data-collection";
-                
-                // 构建Kafka报文
                 String kafkaMessage = buildKafkaMessage(task, deviceDataMap);
-                kafkaProducerService.sendMessageSync(topic, kafkaMessage);
-                log.debug("任务 {} Kafka发送成功: {}", task.getId(), kafkaMessage);
+                kafkaProducerService.sendWithTaskConfig(task, kafkaMessage);
             } catch (Exception e) {
-                log.error("任务 {} Kafka发送失败: {}", task.getId(), e.getMessage());
+                log.error("任务 {} Kafka发送失败: {}", task.getId(), e.getMessage(), e);
             }
         }
     }
@@ -267,7 +287,9 @@ public class TaskExecutorService {
                 // 格式化时间为yyyy-MM-dd HH:mm:ss格式
                 DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
                 String timeStr = record.getTimestamp().format(formatter);
-                
+                if ("false".equals(record.getValue()) || "true".equals(record.getValue())){
+                    record.setValue(record.getValue().equals("true") ? "1" : "0");
+                }
                 nodeSection.append(record.getNodeId())
                           .append(";").append(record.getValue())
                           .append(";").append(timeStr);
@@ -293,11 +315,14 @@ public class TaskExecutorService {
     private void collectOpcUaWithDeviceGroup(Task task, LocalDateTime now, Map<String, List<DataRecord>> deviceDataMap) {
         OpcUaClient client = opcUaClients.get(task.getId());
         if (client == null) {
+            log.info("任务 {} 未找到已存在的OPC UA连接，尝试新建连接...", task.getId());
             try {
                 client = connectOpcUaClient(task);
                 opcUaClients.put(task.getId(), client);
+                log.info("任务 {} OPC UA连接已缓存", task.getId());
             } catch (Exception e) {
-                log.warn("任务 {} OPC UA 连接失败，本周期跳过: {}", task.getId(), e.getMessage());
+                log.error("任务 {} OPC UA 连接失败，本周期跳过 - 错误类型: {}, 错误信息: {}",
+                        task.getId(), e.getClass().getName(), e.getMessage(), e);
                 return;
             }
         }
@@ -338,13 +363,16 @@ public class TaskExecutorService {
             }
         }
         if (nodeIds.isEmpty()) {
+            log.warn("任务 {} 没有有效节点ID，跳过采集", task.getId());
             return;
         }
 
         try {
             int timeoutMs = task.getOpcSessionTimeout() != null ? task.getOpcSessionTimeout() : 5000;
+            log.info("任务 {} 开始读取 {} 个节点, 超时: {}ms", task.getId(), nodeIds.size(), timeoutMs);
             List<DataValue> values = client.readValues(0.0, TimestampsToReturn.Both, nodeIds)
                     .get(timeoutMs, TimeUnit.MILLISECONDS);
+            log.info("任务 {} 读取完成，获取 {} 个值", task.getId(), values != null ? values.size() : 0);
 
             for (int i = 0; i < orderedPoints.size(); i++) {
                 TaskPoint point = orderedPoints.get(i);
@@ -393,7 +421,8 @@ public class TaskExecutorService {
                 }
             }
         } catch (Exception e) {
-            log.warn("任务 {} OPC UA 读取失败，将尝试重连: {}", task.getId(), e.getMessage());
+            log.error("任务 {} OPC UA 读取失败，将尝试重连 - 错误类型: {}, 错误信息: {}",
+                    task.getId(), e.getClass().getName(), e.getMessage(), e);
             disconnectOpcUa(task.getId());
         }
     }
@@ -413,20 +442,54 @@ public class TaskExecutorService {
 
     private OpcUaClient connectOpcUaClient(Task task) throws Exception {
         String endpointUrl = task.getOpcServerUrl();
+        log.info("任务 {} 开始连接OPC UA服务器: {}", task.getId(), endpointUrl);
+        log.info("任务 {} 连接参数 - 安全策略: {}, 安全模式: {}, 用户名: {}, 超时: {}ms",
+                task.getId(),
+                task.getOpcSecurityPolicy() != null ? task.getOpcSecurityPolicy() : "None",
+                task.getOpcSecurityMode() != null ? task.getOpcSecurityMode() : "None",
+                task.getOpcUsername() != null && !task.getOpcUsername().isEmpty() ? "已设置" : "匿名",
+                task.getOpcSessionTimeout() != null ? task.getOpcSessionTimeout() : 5000);
+
         if (endpointUrl == null || endpointUrl.trim().isEmpty()) {
+            log.error("任务 {} OPC UA 服务器地址为空", task.getId());
             throw new IllegalArgumentException("OPC UA 服务器地址为空");
         }
         endpointUrl = endpointUrl.trim();
 
-        List<EndpointDescription> endpoints = DiscoveryClient.getEndpoints(endpointUrl).get();
+        log.info("任务 {} 开始发现Endpoints: {}", task.getId(), endpointUrl);
+        List<EndpointDescription> endpoints;
+        try {
+            endpoints = DiscoveryClient.getEndpoints(endpointUrl).get();
+            log.info("任务 {} 发现 {} 个Endpoints", task.getId(), endpoints != null ? endpoints.size() : 0);
+            if (endpoints != null) {
+                for (int i = 0; i < endpoints.size(); i++) {
+                    EndpointDescription ep = endpoints.get(i);
+                    log.info("任务 {} Endpoint[{}] - URL: {}, 安全策略: {}, 安全模式: {}",
+                            task.getId(), i, ep.getEndpointUrl(), ep.getSecurityPolicyUri(), ep.getSecurityMode());
+                }
+            }
+        } catch (Exception e) {
+            log.error("任务 {} 发现Endpoints失败: {} - 完整URL: {}",
+                    task.getId(), e.getMessage(), endpointUrl, e);
+            throw e;
+        }
+
         if (endpoints == null || endpoints.isEmpty()) {
+            log.error("任务 {} 未发现可用Endpoints, URL: {}", task.getId(), endpointUrl);
             throw new IllegalStateException("未发现可用 Endpoints");
         }
 
         EndpointDescription endpoint = selectEndpoint(endpoints, task);
+        log.info("任务 {} 选择Endpoint - URL: {}, 安全策略: {}, 安全模式: {}",
+                task.getId(), endpoint.getEndpointUrl(), endpoint.getSecurityPolicyUri(), endpoint.getSecurityMode());
+
         IdentityProvider identity = buildIdentity(task);
+        log.info("任务 {} 认证方式: {}", task.getId(),
+                identity instanceof UsernameProvider ? "用户名密码认证" : "匿名认证");
 
         int timeoutMs = task.getOpcSessionTimeout() != null ? task.getOpcSessionTimeout() : 5000;
+        log.info("任务 {} 创建OPC UA客户端配置, 请求超时: {}ms", task.getId(), timeoutMs);
+
         OpcUaClientConfig config = OpcUaClientConfig.builder()
                 .setApplicationName(LocalizedText.english("opcua-task-" + task.getId()))
                 .setApplicationUri("urn:opcua:task:" + task.getId())
@@ -436,8 +499,15 @@ public class TaskExecutorService {
                 .build();
 
         OpcUaClient client = OpcUaClient.create(config);
-        client.connect().get(timeoutMs, TimeUnit.MILLISECONDS);
-        log.info("任务 {} 已连接 OPC UA: {}", task.getId(), endpoint.getEndpointUrl());
+        log.info("任务 {} 开始建立OPC UA连接...", task.getId());
+        try {
+            client.connect().get(timeoutMs, TimeUnit.MILLISECONDS);
+            log.info("任务 {} OPC UA连接成功 - URL: {}", task.getId(), endpoint.getEndpointUrl());
+        } catch (Exception e) {
+            log.error("任务 {} OPC UA连接失败 - URL: {}, 错误类型: {}, 错误信息: {}",
+                    task.getId(), endpoint.getEndpointUrl(), e.getClass().getName(), e.getMessage(), e);
+            throw e;
+        }
         return client;
     }
 
@@ -635,30 +705,113 @@ public class TaskExecutorService {
     }
 
     private DataRecord persistRecord(Task task, TaskPoint point, String valueStr, LocalDateTime now) {
-        // 保存到数据库
-        com.example.opcua.entity.DataRecord dbRecord = new com.example.opcua.entity.DataRecord();
-        dbRecord.setTaskId(task.getId());
-        dbRecord.setTaskName(task.getName());
-        dbRecord.setPointName(point.getName());
-        dbRecord.setProtocolType(task.getProtocolType());
-        dbRecord.setAddress(point.getAddress());
-        dbRecord.setValue(valueStr);
-        dbRecord.setTimestamp(now);
-        
-        // 自动判断数据类型
-        String dataType = autoDetectDataType(valueStr);
-        dbRecord.setDataType(dataType);
-        dataRecordRepository.save(dbRecord);
-        log.debug("任务 {} 点位 {} 数据已存储: {}", task.getId(), point.getName(), valueStr);
-        
+        // 保存到数据库（暂时注释）
+        // com.example.opcua.entity.DataRecord dbRecord = new com.example.opcua.entity.DataRecord();
+        // dbRecord.setTaskId(task.getId());
+        // dbRecord.setTaskName(task.getName());
+        // dbRecord.setPointName(point.getName());
+        // dbRecord.setProtocolType(task.getProtocolType());
+        // dbRecord.setAddress(point.getAddress());
+        // dbRecord.setValue(valueStr);
+        // dbRecord.setTimestamp(now);
+        // String dataType = autoDetectDataType(valueStr);
+        // dbRecord.setDataType(dataType);
+        // dataRecordService.save(dbRecord);
+        // log.info("任务 {} 点位 {} 数据已存储到分表: {}, 值: {}", task.getId(), point.getName(), getTableSuffix(now), valueStr);
+
+        // 存入内存缓存
+        DataCacheEntry cacheEntry = new DataCacheEntry();
+        cacheEntry.setTaskId(task.getId());
+        cacheEntry.setTaskName(task.getName());
+        cacheEntry.setPointName(point.getName());
+        cacheEntry.setNodeId(point.getNodeId());
+        cacheEntry.setProtocolType(task.getProtocolType());
+        cacheEntry.setAddress(point.getAddress());
+        cacheEntry.setValue(valueStr);
+        cacheEntry.setDataType(autoDetectDataType(valueStr));
+        cacheEntry.setTimestamp(now);
+        cacheEntry.setDevId(point.getDevId());
+        addToCache(cacheEntry);
+
         // 创建内部DataRecord对象用于Kafka
         DataRecord kafkaRecord = new DataRecord();
         kafkaRecord.setPointName(point.getName());
         kafkaRecord.setNodeId(point.getNodeId());
         kafkaRecord.setValue(valueStr);
         kafkaRecord.setTimestamp(now);
-        
+
         return kafkaRecord;
+    }
+
+    /**
+     * 添加数据到内存缓存，每个任务最多缓存10000条
+     * 同时用BigDecimal一直累加数据总量
+     */
+    private void addToCache(DataCacheEntry entry) {
+        List<DataCacheEntry> list = dataCache.computeIfAbsent(entry.getTaskId(), k -> new ArrayList<>());
+        synchronized (list) {
+            list.add(entry);
+            if (list.size() > 10000) {
+                list.subList(0, list.size() - 10000).clear();
+            }
+        }
+        
+        dataCount.compute(entry.getTaskId(), (k, v) -> (v == null) ? BigDecimal.ONE : v.add(BigDecimal.ONE));
+    }
+
+    /**
+     * 获取任务缓存数据
+     */
+    public List<DataCacheEntry> getCacheData(Long taskId, Long seconds) {
+        List<DataCacheEntry> all = dataCache.getOrDefault(taskId, new ArrayList<>());
+        if (all.isEmpty()) {
+            return new ArrayList<>();
+        }
+        if (seconds == null || seconds <= 0) {
+            return new ArrayList<>(all);
+        }
+        LocalDateTime threshold = LocalDateTime.now().minusSeconds(seconds);
+        List<DataCacheEntry> recent = new ArrayList<>();
+        for (int i = all.size() - 1; i >= 0; i--) {
+            DataCacheEntry entry = all.get(i);
+            if (entry.getTimestamp() != null && entry.getTimestamp().isAfter(threshold)) {
+                recent.add(entry);
+            }
+        }
+        return recent;
+    }
+
+    /**
+     * 根据点位名称获取缓存数据
+     */
+    public List<DataCacheEntry> getCacheDataByPointName(String pointName, Long seconds) {
+        List<DataCacheEntry> result = new ArrayList<>();
+        for (List<DataCacheEntry> entries : dataCache.values()) {
+            for (int i = entries.size() - 1; i >= 0; i--) {
+                DataCacheEntry entry = entries.get(i);
+                if (pointName.equals(entry.getPointName())) {
+                    if (seconds != null && seconds > 0) {
+                        LocalDateTime threshold = LocalDateTime.now().minusSeconds(seconds);
+                        if (entry.getTimestamp() == null || !entry.getTimestamp().isAfter(threshold)) {
+                            continue;
+                        }
+                    }
+                    result.add(entry);
+                }
+            }
+        }
+        return result;
+    }
+    
+    /**
+     * 获取任务的数据总量（一直累加，不受缓存10000条限制）
+     */
+    public BigDecimal getDataCount(Long taskId) {
+        return dataCount.getOrDefault(taskId, BigDecimal.ZERO);
+    }
+
+    private static String getTableSuffix(LocalDateTime timestamp) {
+        return timestamp.format(DateTimeFormatter.ofPattern("yyyyMM"));
     }
 
     private String autoDetectDataType(String value) {
