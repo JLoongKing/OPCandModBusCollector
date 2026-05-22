@@ -9,7 +9,7 @@ cd /d "%~dp0"
 
 echo [INFO] Looking for service process...
 
-for /f "tokens=5 delims= " %%a in ('netstat -ano ^| findstr :8080 ^| findstr LISTENING 2^>nul') do (
+for /f "tokens=5 delims= " %%a in ('netstat -ano ^| findstr :8081 ^| findstr LISTENING 2^>nul') do (
     set PID=%%a
 )
 
