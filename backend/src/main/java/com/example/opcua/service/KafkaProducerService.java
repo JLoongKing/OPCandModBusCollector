@@ -102,6 +102,17 @@ public class KafkaProducerService {
         return sendMessageWithCallback(opcuaDataTopic, message);
     }
 
+    private static String truncateMsg(Object msg) {
+        if (msg == null) {
+            return "null";
+        }
+        String s = msg.toString();
+        if (s.length() <= 100) {
+            return s;
+        }
+        return s.substring(0, 100) + "...";
+    }
+
     /**
      * 发送消息到指定主题
      * @param topic 主题名称
@@ -109,7 +120,7 @@ public class KafkaProducerService {
      */
     private void sendMessage(String topic, Object message) {
         try {
-            log.debug("准备发送消息到Kafka主题 {}: {}", topic, message);
+            log.debug("准备发送消息到Kafka主题 {}: {}", topic, truncateMsg(message));
             ListenableFuture<SendResult<String, Object>> future = kafkaTemplate.send(topic, message);
             
             future.addCallback(new ListenableFutureCallback<SendResult<String, Object>>() {
@@ -138,7 +149,7 @@ public class KafkaProducerService {
      */
     private CompletableFuture<SendResult<String, Object>> sendMessageWithCallback(String topic, Object message) {
         try {
-            log.debug("准备发送消息到Kafka主题 {}: {}", topic, message);
+            log.debug("准备发送消息到Kafka主题 {}: {}", topic, truncateMsg(message));
             return kafkaTemplate.send(topic, message).completable()
                     .whenComplete((result, ex) -> {
                         if (ex != null) {
@@ -168,7 +179,7 @@ public class KafkaProducerService {
             backoff = @Backoff(delayExpression = "${spring.kafka.producer.retry-delay}", multiplier = 2)
     )
     public SendResult<String, Object> sendMessageSync(String topic, Object message) throws Exception {
-        log.debug("同步发送消息到Kafka主题 {}: {}", topic, message);
+        log.debug("同步发送消息到Kafka主题 {}: {}", topic, truncateMsg(message));
         return kafkaTemplate.send(topic, message).get();
     }
 
@@ -186,7 +197,7 @@ public class KafkaProducerService {
             backoff = @Backoff(delayExpression = "${spring.kafka.producer.retry-delay}", multiplier = 2)
     )
     public SendResult<String, Object> sendMessageSync(String topic, String key, Object message) throws Exception {
-        log.debug("同步发送消息到Kafka主题 {} (key={}): {}", topic, key, message);
+        log.debug("同步发送消息到Kafka主题 {} (key={}): {}", topic, key, truncateMsg(message));
         return kafkaTemplate.send(topic, key, message).get();
     }
 
@@ -225,14 +236,12 @@ public class KafkaProducerService {
 
         if (key != null) {
             template.send(topic, key, message).get();
-            log.info("任务 {} Kafka发送成功 (topic={}, key={}): {}",
-                    task.getId(), topic, key,
-                    message.length() > 100 ? message.substring(0, 100) + "..." : message);
+            log.info("任务 {} Kafka发送成功 (topic={}, key={}, 消息长度={}): {}",
+                    task.getId(), topic, key, message.length(), truncateMsg(message));
         } else {
             template.send(topic, message).get();
-            log.info("任务 {} Kafka发送成功 (topic={}): {}",
-                    task.getId(), topic,
-                    message.length() > 100 ? message.substring(0, 100) + "..." : message);
+            log.info("任务 {} Kafka发送成功 (topic={}, 消息长度={}): {}",
+                    task.getId(), topic, message.length(), truncateMsg(message));
         }
     }
 }

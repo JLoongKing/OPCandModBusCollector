@@ -275,7 +275,7 @@ public final class ModbusTcpUtil {
         try {
             newMaster.init();
             CONNECTION_CACHE.put(key, newMaster);
-            log.debug("创建新连接成功: {}", key);
+            log.info("Modbus TCP连接成功 - host: {}, port: {}, timeout: {}ms", host, port, timeoutMs);
             return newMaster;
         } catch (Exception e) {
             log.error("创建连接失败: {}", e.getMessage(), e);
@@ -488,7 +488,7 @@ public final class ModbusTcpUtil {
      * 关闭所有缓存连接，用于应用程序关闭时的资源清理
      */
     public static void shutdown() {
-        log.info("开始关闭所有Modbus连接...");
+        log.info("开始关闭所有Modbus连接，当前缓存连接数: {}", CONNECTION_CACHE.size());
         for (String key : CONNECTION_CACHE.keySet()) {
             invalidateConnection(key);
         }

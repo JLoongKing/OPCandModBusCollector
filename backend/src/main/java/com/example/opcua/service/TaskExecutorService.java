@@ -633,7 +633,7 @@ public class TaskExecutorService {
                     valueStr = result;
                 }
             } catch (Exception e) {
-                log.warn("任务 {} Modbus 读点位 {} 失败: {}", task.getId(), point.getName(), e.getMessage());
+                log.warn("任务 {} Modbus 读点位 {} 失败 (host={}:{}) - 错误: {}", task.getId(), point.getName(), host, port, e.getMessage());
                 valueStr = "ERROR:" + e.getMessage();
             }
             
