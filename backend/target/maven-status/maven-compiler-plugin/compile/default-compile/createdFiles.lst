@@ -1,5 +1,6 @@
 com\example\opcua\service\PointService.class
 com\example\opcua\OpcUaClientApplication.class
+com\example\opcua\controller\MockDataController.class
 com\example\opcua\config\CorsConfig.class
 com\example\opcua\service\TaskExecutorService$DataRecord.class
 com\example\opcua\controller\TaskController.class

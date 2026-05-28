@@ -23,7 +23,17 @@ import org.eclipse.milo.opcua.stack.core.types.enumerated.MessageSecurityMode;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.TimestampsToReturn;
 import org.eclipse.milo.opcua.stack.core.types.structured.EndpointDescription;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -56,6 +66,8 @@ public class TaskExecutorService {
     private final Map<Long, ScheduledFuture<?>> runningTasks = new ConcurrentHashMap<>();
     private final Map<Long, ScheduledExecutorService> taskExecutors = new ConcurrentHashMap<>();
     private final Map<Long, OpcUaClient> opcUaClients = new ConcurrentHashMap<>();
+    private final Map<Long, RestTemplate> httpRestTemplates = new ConcurrentHashMap<>();
+    private final ObjectMapper objectMapper = new ObjectMapper();
     private final Random random = new Random();
 
     private final Map<Long, List<DataCacheEntry>> dataCache = new ConcurrentHashMap<>();
@@ -147,6 +159,8 @@ public class TaskExecutorService {
             scanInterval = Math.max(100, task.getModbusScanInterval());
         } else if ("OPC_UA".equals(task.getProtocolType()) && task.getOpcScanInterval() != null) {
             scanInterval = Math.max(100, task.getOpcScanInterval());
+        } else if ("HTTP".equals(task.getProtocolType()) && task.getHttpScanInterval() != null) {
+            scanInterval = Math.max(100, task.getHttpScanInterval());
         }
 
         ScheduledFuture<?> future = executor.scheduleAtFixedRate(() -> {
@@ -225,6 +239,8 @@ public class TaskExecutorService {
             collectOpcUaWithDeviceGroup(task, now, deviceDataMap);
         } else if ("MODBUS_TCP".equals(task.getProtocolType())) {
             collectModbusWithDeviceGroup(task, now, deviceDataMap);
+        } else if ("HTTP".equals(task.getProtocolType())) {
+            collectHttpWithDeviceGroup(task, now, deviceDataMap);
         } else {
             collectSimulatedWithDeviceGroup(task, now, deviceDataMap);
         }
@@ -710,6 +726,127 @@ public class TaskExecutorService {
                 kafkaParts.add(record.getPointName() + "=" + record.getValue());
             }
         }
+    }
+
+    /**
+     * HTTP 数据采集
+     */
+    private void collectHttpWithDeviceGroup(Task task, LocalDateTime now, Map<String, List<DataRecord>> deviceDataMap) {
+        String url = task.getHttpUrl();
+        if (url == null || url.trim().isEmpty()) {
+            System.out.println("[HTTP] 任务 " + task.getId() + " HTTP URL 未配置，跳过采集");
+            return;
+        }
+
+        String method = task.getHttpMethod() != null ? task.getHttpMethod().toUpperCase() : "GET";
+        int timeout = task.getHttpTimeout() != null ? task.getHttpTimeout() : 5000;
+
+        System.out.println("[HTTP] 任务 " + task.getId() + " 开始采集 - URL: " + url + ", 方法: " + method);
+
+        try {
+            RestTemplate restTemplate = httpRestTemplates.computeIfAbsent(task.getId(), k -> {
+                SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+                factory.setConnectTimeout(timeout);
+                factory.setReadTimeout(timeout);
+                return new RestTemplate(factory);
+            });
+
+            HttpHeaders headers = new HttpHeaders();
+            if (task.getHttpHeaders() != null && !task.getHttpHeaders().trim().isEmpty()) {
+                String[] headerLines = task.getHttpHeaders().split("\n");
+                for (String line : headerLines) {
+                    line = line.trim();
+                    if (line.isEmpty() || !line.contains(":")) continue;
+                    int idx = line.indexOf(':');
+                    String key = line.substring(0, idx).trim();
+                    String val = line.substring(idx + 1).trim();
+                    headers.set(key, val);
+                }
+            }
+
+            HttpEntity<String> entity;
+            if ("POST".equals(method) || "PUT".equals(method)) {
+                if (headers.getContentType() == null) {
+                    headers.setContentType(MediaType.APPLICATION_JSON);
+                }
+                String body = task.getHttpBody() != null ? task.getHttpBody() : "";
+                entity = new HttpEntity<>(body, headers);
+            } else {
+                entity = new HttpEntity<>(headers);
+            }
+
+            ResponseEntity<String> response = restTemplate.exchange(url.trim(), HttpMethod.valueOf(method), entity, String.class);
+            String responseBody = response.getBody();
+            System.out.println("[HTTP] 任务 " + task.getId() + " 响应成功 - 长度: " + (responseBody != null ? responseBody.length() : 0));
+
+            if (responseBody == null || responseBody.isEmpty()) {
+                return;
+            }
+
+            JsonNode root = objectMapper.readTree(responseBody);
+
+            for (TaskPoint point : task.getPoints()) {
+                String valueStr;
+                try {
+                    String path = point.getJsonPath();
+                    if (path == null || path.isEmpty()) {
+                        path = point.getAddress();
+                    }
+                    if (path == null || path.isEmpty()) {
+                        valueStr = root.asText();
+                    } else {
+                        JsonNode node = findNodeByPath(root, path);
+                        if (node == null || node.isNull()) {
+                            valueStr = null;
+                        } else if (node.isValueNode()) {
+                            valueStr = node.asText();
+                        } else {
+                            valueStr = objectMapper.writeValueAsString(node);
+                        }
+                    }
+                } catch (Exception e) {
+                    System.out.println("[HTTP] 任务 " + task.getId() + " 点位 " + point.getName() + " JSON 提取失败: " + e.getMessage());
+                    valueStr = null;
+                }
+
+                System.out.println("[HTTP] 任务 " + task.getId() + " 点位 " + point.getName() + " 值: " + valueStr);
+
+                if (valueStr != null && !valueStr.isEmpty() && !"null".equals(valueStr)) {
+                    DataRecord record = persistRecord(task, point, valueStr, now);
+
+                    String deviceId = point.getDevId() != null && !point.getDevId().trim().isEmpty()
+                            ? point.getDevId().trim()
+                            : "DEFAULT_DEV";
+
+                    deviceDataMap.computeIfAbsent(deviceId, k -> new ArrayList<>()).add(record);
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("[HTTP] 任务 " + task.getId() + " 请求失败: " + e.getMessage());
+        }
+    }
+
+    private JsonNode findNodeByPath(JsonNode root, String path) {
+        JsonNode current = root;
+        String[] parts = path.replace(".", "/").split("/");
+        for (String part : parts) {
+            part = part.trim();
+            if (part.isEmpty()) continue;
+            if (current.isArray()) {
+                try {
+                    int idx = Integer.parseInt(part);
+                    current = current.get(idx);
+                } catch (NumberFormatException e) {
+                    return null;
+                }
+            } else {
+                current = current.get(part);
+            }
+            if (current == null) {
+                return null;
+            }
+        }
+        return current;
     }
 
     private DataRecord persistRecord(Task task, TaskPoint point, String valueStr, LocalDateTime now) {

@@ -11,8 +11,8 @@
       <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
       <el-table-column label="协议类型" width="120">
         <template #default="{ row }">
-          <el-tag :type="row.protocolType === 'OPC_UA' ? 'success' : 'warning'">
-            {{ row.protocolType === 'OPC_UA' ? 'OPC UA' : 'Modbus TCP' }}
+          <el-tag :type="row.protocolType === 'OPC_UA' ? 'success' : row.protocolType === 'MODBUS_TCP' ? 'warning' : 'primary'">
+            {{ row.protocolType === 'OPC_UA' ? 'OPC UA' : row.protocolType === 'MODBUS_TCP' ? 'Modbus TCP' : 'HTTP接口' }}
           </el-tag>
         </template>
       </el-table-column>

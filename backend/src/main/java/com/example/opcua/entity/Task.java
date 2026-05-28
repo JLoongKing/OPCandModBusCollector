@@ -69,6 +69,27 @@ public class Task {
     @Column(name = "modbus_scan_interval")
     private Integer modbusScanInterval;
 
+    @Column(name = "http_url", length = 500)
+    private String httpUrl;
+
+    @Column(name = "http_method", length = 10)
+    private String httpMethod;
+
+    @Column(name = "http_headers", length = 2000)
+    private String httpHeaders;
+
+    @Column(name = "http_body", length = 4000)
+    private String httpBody;
+
+    @Column(name = "http_timeout")
+    private Integer httpTimeout;
+
+    @Column(name = "http_scan_interval")
+    private Integer httpScanInterval;
+
+    @Column(name = "http_data_path", length = 500)
+    private String httpDataPath;
+
     @Column(name = "kafka_enabled")
     private Boolean kafkaEnabled;
 

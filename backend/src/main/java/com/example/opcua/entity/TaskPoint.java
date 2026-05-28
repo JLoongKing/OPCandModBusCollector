@@ -42,6 +42,9 @@ public class TaskPoint {
     @Column(name = "sort_order")
     private Integer sortOrder;
 
+    @Column(name = "json_path", length = 500)
+    private String jsonPath;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "task_id")
     @JsonIgnore

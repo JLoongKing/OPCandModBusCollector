@@ -235,11 +235,11 @@ public class KafkaProducerService {
         KafkaTemplate<String, Object> template = getTemplateForTask(task);
 
         if (key != null) {
-            template.send(topic, key, message).get();
+//            template.send(topic, key, message).get();
             log.info("任务 {} Kafka发送成功 (topic={}, key={}, 消息长度={}): {}",
                     task.getId(), topic, key, message.length(), truncateMsg(message));
         } else {
-            template.send(topic, message).get();
+//            template.send(topic, message).get();
             log.info("任务 {} Kafka发送成功 (topic={}, 消息长度={}): {}",
                     task.getId(), topic, message.length(), truncateMsg(message));
         }

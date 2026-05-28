@@ -3,6 +3,20 @@
     "configurations": [
         {
             "type": "java",
+            "name": "OpcUaClientApplication",
+            "request": "launch",
+            "mainClass": "OpcUaClientApplication",
+            "projectName": "opcua-client"
+        },
+        {
+            "type": "java",
+            "name": "Attach to Remote Program",
+            "request": "attach",
+            "hostName": "localhost",
+            "port": "5005"
+        },
+        {
+            "type": "java",
             "name": "TestModbus",
             "request": "launch",
             "mainClass": "TestModbus",

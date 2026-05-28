@@ -16,6 +16,7 @@
         <el-radio-group v-model="form.protocolType" @change="onProtocolChange">
           <el-radio value="OPC_UA">OPC UA</el-radio>
           <el-radio value="MODBUS_TCP">Modbus TCP</el-radio>
+          <el-radio value="HTTP">HTTP接口</el-radio>
         </el-radio-group>
       </el-form-item>
 
@@ -74,6 +75,37 @@
         </el-form-item>
       </template>
 
+      <template v-if="form.protocolType === 'HTTP'">
+        <el-divider content-position="left">HTTP 接口配置</el-divider>
+        <el-form-item label="请求URL" prop="httpUrl">
+          <el-input v-model="form.httpUrl" placeholder="http://192.168.1.100/api/data" />
+        </el-form-item>
+        <el-form-item label="请求方法">
+          <el-select v-model="form.httpMethod" placeholder="请选择请求方法">
+            <el-option label="GET" value="GET" />
+            <el-option label="POST" value="POST" />
+            <el-option label="PUT" value="PUT" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="请求头">
+          <el-input v-model="form.httpHeaders" type="textarea" :rows="3" placeholder="每行一个，格式：Key: Value&#10;如：&#10;Authorization: Bearer xxx&#10;Content-Type: application/json" />
+        </el-form-item>
+        <el-form-item v-if="form.httpMethod !== 'GET'" label="请求体">
+          <el-input v-model="form.httpBody" type="textarea" :rows="4" placeholder='POST请求体，如：{"id": 1}' />
+        </el-form-item>
+        <el-form-item label="超时时间(ms)">
+          <el-input-number v-model="form.httpTimeout" :min="100" :max="60000" :step="100" />
+        </el-form-item>
+        <el-form-item label="采集周期(ms)" prop="httpScanInterval">
+          <el-input-number v-model="form.httpScanInterval" :min="100" :max="600000" :step="100" />
+          <span class="field-hint">定时请求接口的间隔，默认 1000ms</span>
+        </el-form-item>
+        <el-form-item label="数据路径">
+          <el-input v-model="form.httpDataPath" placeholder="如：data.items（从JSON响应中提取数组的路径）" />
+          <span class="field-hint">从HTTP响应JSON中提取数据数组的路径，留空则整个响应作为数据源</span>
+        </el-form-item>
+      </template>
+
       <el-divider content-position="left">采集点位配置</el-divider>
       <el-form-item label="批量导入">
         <el-space wrap>
@@ -121,9 +153,14 @@
               <el-input v-model="row.name" placeholder="如：温度" size="small" />
             </template>
           </el-table-column>
-          <el-table-column label="地址" min-width="180">
+          <el-table-column v-if="form.protocolType !== 'HTTP'" label="地址" min-width="180">
             <template #default="{ row }">
               <el-input v-model="row.address" placeholder="如：ns=2;s=Temperature" size="small" />
+            </template>
+          </el-table-column>
+          <el-table-column v-if="form.protocolType === 'HTTP'" label="JSON路径" min-width="180">
+            <template #default="{ row }">
+              <el-input v-model="row.jsonPath" placeholder="如：data.temperature" size="small" />
             </template>
           </el-table-column>
 
@@ -270,6 +307,13 @@ export default {
       modbusPort: 502,
       modbusTimeout: 3000,
       modbusScanInterval: 1000,
+      httpUrl: '',
+      httpMethod: 'GET',
+      httpHeaders: '',
+      httpBody: '',
+      httpTimeout: 5000,
+      httpScanInterval: 1000,
+      httpDataPath: '',
       kafkaEnabled: false,
       kafkaBootstrapServers: 'localhost:9092',
       kafkaTopic: '',
@@ -311,6 +355,9 @@ export default {
         r.modbusHost = [{ required: true, message: '请输入Modbus主机地址', trigger: 'blur' }]
         r.modbusPort = [{ required: true, message: '请输入Modbus端口号', trigger: 'blur' }]
       }
+      if (form.protocolType === 'HTTP') {
+        r.httpUrl = [{ required: true, message: '请输入HTTP请求URL', trigger: 'blur' }]
+      }
       if (form.kafkaEnabled) {
         r.kafkaBootstrapServers = [{ required: true, message: '请输入Kafka集群地址', trigger: 'blur' }]
         r.kafkaTopic = [{ required: true, message: '请输入Kafka Topic', trigger: 'blur' }]
@@ -326,9 +373,12 @@ export default {
     const onProtocolChange = (val) => {
       if (val === 'OPC_UA') {
         form.opcServerUrl = 'opc.tcp://localhost:7718'
-      } else {
+      } else if (val === 'MODBUS_TCP') {
         form.modbusHost = '127.0.0.1'
         form.modbusPort = 502
+      } else if (val === 'HTTP') {
+        form.httpUrl = 'http://localhost:8080/api/data'
+        form.httpMethod = 'GET'
       }
     }
 
@@ -344,6 +394,9 @@ export default {
       if (form.protocolType === 'MODBUS_TCP') {
         point.dataType = 'float'
         point.bitLength = 32
+      }
+      if (form.protocolType === 'HTTP') {
+        point.jsonPath = ''
       }
       form.points.push(point)
     }
@@ -438,9 +491,10 @@ export default {
     const downloadTemplate = async () => {
           try {
             let protocol = form.protocolType || 'OPC_UA'
-            // 转换为后端期望的协议名称
             if (protocol === 'MODBUS_TCP') {
               protocol = 'MODBUS'
+            } else if (protocol === 'HTTP') {
+              protocol = 'HTTP'
             }
             const response = await fetch(API_BASE + '/tasks/template?protocol=' + protocol, {
               method: 'GET',
@@ -467,8 +521,10 @@ export default {
       importProgress.value = '正在上传文件...'
       const fd = new FormData()
       fd.append('file', options.file)
+      let protocolParam = form.protocolType || 'OPC_UA'
+      if (protocolParam === 'MODBUS_TCP') protocolParam = 'MODBUS'
       try {
-        const response = await fetch(`${API_BASE}/tasks/preview-import`, {
+        const response = await fetch(`${API_BASE}/tasks/preview-import?protocol=${protocolParam}`, {
           method: 'POST',
           body: fd
         })
@@ -491,7 +547,7 @@ export default {
           chunk.forEach((p, i) => {
             const point = {
               name: p.name || '',
-              address: p.address || '',
+              address: form.protocolType === 'HTTP' ? '' : (p.address || ''),
               devId: p.devId || '',
               nodeId: p.nodeId || '',
               scaleFactor: p.scaleFactor !== undefined && p.scaleFactor !== null ? p.scaleFactor : 1.0,
@@ -500,6 +556,9 @@ export default {
             if (form.protocolType === 'MODBUS_TCP') {
               point.dataType = p.dataType || 'float'
               point.bitLength = p.bitLength || 32
+            }
+            if (form.protocolType === 'HTTP') {
+              point.jsonPath = p.jsonPath || ''
             }
             form.points.push(point)
           })

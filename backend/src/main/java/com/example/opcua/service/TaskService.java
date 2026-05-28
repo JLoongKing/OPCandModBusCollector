@@ -58,31 +58,46 @@ public class TaskService {
             List<TaskPoint> validPoints = new ArrayList<>();
             for (TaskPoint point : task.getPoints()) {
                 // 过滤无效点位
-            if (point != null && point.getName() != null && !point.getName().trim().isEmpty() &&
-                point.getAddress() != null && !point.getAddress().trim().isEmpty()) {
-                point.setTask(task);
-                // 确保sortOrder有值
-                if (point.getSortOrder() == null) {
-                    point.setSortOrder(validPoints.size());
+            if (point != null && point.getName() != null && !point.getName().trim().isEmpty()) {
+                // 不同协议对地址的要求不同
+                boolean isValid = false;
+                if ("HTTP".equals(task.getProtocolType())) {
+                    // HTTP 协议：只要有 jsonPath 即可
+                    isValid = (point.getJsonPath() != null && !point.getJsonPath().trim().isEmpty());
+                    // 如果 address 为空，设置为空字符串
+                    if (point.getAddress() == null) {
+                        point.setAddress("");
+                    }
+                } else {
+                    // OPC UA / Modbus 协议：需要 address
+                    isValid = (point.getAddress() != null && !point.getAddress().trim().isEmpty());
                 }
-                // 自动生成设备ID和点位ID（如果为空）
-                if (point.getDevId() == null || point.getDevId().trim().isEmpty()) {
-                    point.setDevId("DEV-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 8));
+                
+                if (isValid) {
+                    point.setTask(task);
+                    // 确保sortOrder有值
+                    if (point.getSortOrder() == null) {
+                        point.setSortOrder(validPoints.size());
+                    }
+                    // 自动生成设备ID和点位ID（如果为空）
+                    if (point.getDevId() == null || point.getDevId().trim().isEmpty()) {
+                        point.setDevId("DEV-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 8));
+                    }
+                    if (point.getNodeId() == null || point.getNodeId().trim().isEmpty()) {
+                        point.setNodeId("POINT-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 8));
+                    }
+                    // 设置默认值
+                    if (point.getDataType() == null || point.getDataType().trim().isEmpty()) {
+                        point.setDataType("float");
+                    }
+                    if (point.getBitLength() == null) {
+                        point.setBitLength(32);
+                    }
+                    if (point.getScaleFactor() == null) {
+                        point.setScaleFactor(1.0);
+                    }
+                    validPoints.add(point);
                 }
-                if (point.getNodeId() == null || point.getNodeId().trim().isEmpty()) {
-                    point.setNodeId("POINT-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 8));
-                }
-                // 设置默认值
-                if (point.getDataType() == null || point.getDataType().trim().isEmpty()) {
-                    point.setDataType("float");
-                }
-                if (point.getBitLength() == null) {
-                    point.setBitLength(32);
-                }
-                if (point.getScaleFactor() == null) {
-                    point.setScaleFactor(1.0);
-                }
-                validPoints.add(point);
             }
             }
             task.setPoints(validPoints);
@@ -112,12 +127,21 @@ public class TaskService {
         existing.setOpcPassword(updatedTask.getOpcPassword());
         existing.setOpcSessionTimeout(updatedTask.getOpcSessionTimeout());
         existing.setOpcScanInterval(updatedTask.getOpcScanInterval());
-        existing.setOpcNamespace(updatedTask.getOpcNamespace()); // 添加这行，更新opcNamespace
+        existing.setOpcNamespace(updatedTask.getOpcNamespace());
 
         existing.setModbusHost(updatedTask.getModbusHost());
         existing.setModbusPort(updatedTask.getModbusPort());
         existing.setModbusTimeout(updatedTask.getModbusTimeout());
         existing.setModbusScanInterval(updatedTask.getModbusScanInterval());
+
+        // 更新 HTTP 相关字段
+        existing.setHttpUrl(updatedTask.getHttpUrl());
+        existing.setHttpMethod(updatedTask.getHttpMethod());
+        existing.setHttpHeaders(updatedTask.getHttpHeaders());
+        existing.setHttpBody(updatedTask.getHttpBody());
+        existing.setHttpTimeout(updatedTask.getHttpTimeout());
+        existing.setHttpScanInterval(updatedTask.getHttpScanInterval());
+        existing.setHttpDataPath(updatedTask.getHttpDataPath());
 
         existing.setKafkaEnabled(updatedTask.getKafkaEnabled());
         existing.setKafkaClusterUrl(updatedTask.getKafkaClusterUrl());
@@ -148,6 +172,7 @@ public class TaskService {
                 newPoint.setDataType(point.getDataType());
                 newPoint.setBitLength(point.getBitLength());
                 newPoint.setScaleFactor(point.getScaleFactor());
+                newPoint.setJsonPath(point.getJsonPath()); // 复制 jsonPath
                 newPoint.setSortOrder(sortOrder++);
                 newPoint.setTask(existing);
                 existing.getPoints().add(newPoint);
@@ -220,6 +245,7 @@ public class TaskService {
             p.setDataType(src.getDataType());
             p.setBitLength(src.getBitLength());
             p.setScaleFactor(src.getScaleFactor());
+            p.setJsonPath(src.getJsonPath()); // 复制 jsonPath
             p.setSortOrder(nextOrder++);
             p.setTask(task);
             task.getPoints().add(p);

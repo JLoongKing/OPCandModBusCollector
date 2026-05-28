@@ -265,11 +265,14 @@ public class TaskController {
     public Map<String, Object> startTask(@PathVariable Long id) {
         Map<String, Object> result = new HashMap<>();
         try {
+            System.out.println("[日志] 收到启动任务请求，任务ID: " + id);
             Task task = taskService.startTask(id);
+            System.out.println("[日志] 任务启动成功，任务ID: " + id + ", 名称: " + task.getName() + ", 协议: " + task.getProtocolType());
             result.put("success", true);
             result.put("message", "任务已启动");
             result.put("data", task);
         } catch (Exception e) {
+            System.err.println("[错误] 任务启动失败，任务ID: " + id + ", 错误: " + e.getMessage());
             result.put("success", false);
             result.put("message", "启动失败: " + e.getMessage());
         }
@@ -536,6 +539,8 @@ public class TaskController {
             // 根据协议类型设置不同的模板表头
             if ("MODBUS".equalsIgnoreCase(protocol)) {
                 headers = new String[]{"点位名称*", "点位地址*", "设备ID", "点位ID", "数据类型", "位数", "比例系数（可选）"};
+            } else if ("HTTP".equalsIgnoreCase(protocol)) {
+                headers = new String[]{"点位名称*", "JSON路径*", "设备ID", "点位ID", "比例系数（可选）"};
             } else {
                 headers = new String[]{"点位名称*", "点位地址*", "设备ID", "点位ID", "比例系数（可选）"};
             }
@@ -598,6 +603,27 @@ public class TaskController {
                 row2.createCell(4).setCellValue("float");
                 row2.createCell(5).setCellValue(32);
                 row2.createCell(6).setCellValue(1.0);
+            } else if ("HTTP".equalsIgnoreCase(protocol)) {
+                Row row1 = sheet.createRow(1);
+                row1.createCell(0).setCellValue("温度");
+                row1.createCell(1).setCellValue("data.temperature");
+                row1.createCell(2).setCellValue("DEVICE_001");
+                row1.createCell(3).setCellValue("Node_001");
+                row1.createCell(4).setCellValue(1.0);
+                
+                Row row2 = sheet.createRow(2);
+                row2.createCell(0).setCellValue("压力");
+                row2.createCell(1).setCellValue("data.pressure");
+                row2.createCell(2).setCellValue("DEVICE_001");
+                row2.createCell(3).setCellValue("Node_002");
+                row2.createCell(4).setCellValue(1.0);
+                
+                Row row3 = sheet.createRow(3);
+                row3.createCell(0).setCellValue("湿度");
+                row3.createCell(1).setCellValue("data.humidity");
+                row3.createCell(2).setCellValue("DEVICE_002");
+                row3.createCell(3).setCellValue("Node_003");
+                row3.createCell(4).setCellValue(1.0);
             }
 
             // 再次调整列宽以适应示例数据
@@ -755,58 +781,71 @@ public class TaskController {
      * @return 预览结果
      */
     @PostMapping("/preview-import")
-    public Map<String, Object> previewImport(@RequestParam("file") MultipartFile file) {
+    public Map<String, Object> previewImport(@RequestParam("file") MultipartFile file,
+                                              @RequestParam(value = "protocol", required = false, defaultValue = "OPC_UA") String protocol) {
         Map<String, Object> result = new HashMap<>();
         try {
-            // 读取Excel文件
             Workbook workbook = WorkbookFactory.create(file.getInputStream());
             Sheet sheet = workbook.getSheetAt(0);
 
             List<Map<String, Object>> points = new ArrayList<>();
             Iterator<Row> rowIterator = sheet.iterator();
 
-            // 跳过表头
             if (rowIterator.hasNext()) {
                 rowIterator.next();
             }
 
-            // 读取数据行
             while (rowIterator.hasNext()) {
                 Row row = rowIterator.next();
 
-                // 跳过空行
-                if (row.getCell(0) == null || row.getCell(0).getStringCellValue().trim().isEmpty()) {
+                if (row.getCell(0) == null || getCellValueAsString(row.getCell(0)).trim().isEmpty()) {
                     continue;
                 }
 
                 Map<String, Object> point = new HashMap<>();
                 point.put("name", getCellValueAsString(row.getCell(0)).trim());
-                point.put("address", getCellValueAsString(row.getCell(1)).trim());
 
-                // 处理可选字段
+                if ("HTTP".equalsIgnoreCase(protocol)) {
+                    point.put("jsonPath", getCellValueAsString(row.getCell(1)).trim());
+                } else {
+                    point.put("address", getCellValueAsString(row.getCell(1)).trim());
+                }
+
                 if (row.getCell(2) != null) {
                     point.put("devId", getCellValueAsString(row.getCell(2)).trim());
                 }
                 if (row.getCell(3) != null) {
                     point.put("nodeId", getCellValueAsString(row.getCell(3)).trim());
                 }
-                if (row.getCell(4) != null) {
-                    point.put("dataType", getCellValueAsString(row.getCell(4)).trim());
-                }
-                if (row.getCell(5) != null) {
-                    String bitLengthStr = getCellValueAsString(row.getCell(5));
-                    try {
-                        point.put("bitLength", Integer.parseInt(bitLengthStr));
-                    } catch (NumberFormatException e) {
-                        log.warn("位数解析失败: {}", bitLengthStr);
+
+                if ("MODBUS".equalsIgnoreCase(protocol) || "MODBUS_TCP".equalsIgnoreCase(protocol)) {
+                    if (row.getCell(4) != null) {
+                        point.put("dataType", getCellValueAsString(row.getCell(4)).trim());
                     }
-                }
-                if (row.getCell(6) != null) {
-                    String scaleFactorStr = getCellValueAsString(row.getCell(6));
-                    try {
-                        point.put("scaleFactor", Double.parseDouble(scaleFactorStr));
-                    } catch (NumberFormatException e) {
-                        log.warn("比例系数解析失败: {}", scaleFactorStr);
+                    if (row.getCell(5) != null) {
+                        String bitLengthStr = getCellValueAsString(row.getCell(5));
+                        try {
+                            point.put("bitLength", Integer.parseInt(bitLengthStr));
+                        } catch (NumberFormatException e) {
+                            log.warn("位数解析失败: {}", bitLengthStr);
+                        }
+                    }
+                    if (row.getCell(6) != null) {
+                        String scaleFactorStr = getCellValueAsString(row.getCell(6));
+                        try {
+                            point.put("scaleFactor", Double.parseDouble(scaleFactorStr));
+                        } catch (NumberFormatException e) {
+                            log.warn("比例系数解析失败: {}", scaleFactorStr);
+                        }
+                    }
+                } else {
+                    if (row.getCell(4) != null) {
+                        String scaleFactorStr = getCellValueAsString(row.getCell(4));
+                        try {
+                            point.put("scaleFactor", Double.parseDouble(scaleFactorStr));
+                        } catch (NumberFormatException e) {
+                            log.warn("比例系数解析失败: {}", scaleFactorStr);
+                        }
                     }
                 }
 
