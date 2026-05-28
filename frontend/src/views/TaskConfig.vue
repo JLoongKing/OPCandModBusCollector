@@ -4,7 +4,7 @@
       <h2>{{ isEdit ? '编辑任务' : '创建任务' }}</h2>
     </div>
 
-    <el-form ref="formRef" :model="form" :rules="rules" label-width="140px" v-loading="loading" :validate-on-rule-change="false">
+    <el-form ref="formRef" :model="form" :rules="rules" label-width="140px" v-loading="loading" :validate-on-rule-change="false" :disabled="submitting || importing">
       <el-divider content-position="left">基本信息</el-divider>
       <el-form-item label="任务名称" prop="name">
         <el-input v-model="form.name" placeholder="请输入任务名称" maxlength="100" />
@@ -14,8 +14,8 @@
       </el-form-item>
       <el-form-item label="协议类型" prop="protocolType">
         <el-radio-group v-model="form.protocolType" @change="onProtocolChange">
-          <el-radio label="OPC_UA">OPC UA</el-radio>
-          <el-radio label="MODBUS_TCP">Modbus TCP</el-radio>
+          <el-radio value="OPC_UA">OPC UA</el-radio>
+          <el-radio value="MODBUS_TCP">Modbus TCP</el-radio>
         </el-radio-group>
       </el-form-item>
 
@@ -77,17 +77,22 @@
       <el-divider content-position="left">采集点位配置</el-divider>
       <el-form-item label="批量导入">
         <el-space wrap>
-          <el-button type="primary" size="small" @click="downloadTemplate">下载 Excel 模板</el-button>
+          <el-button type="primary" size="small" @click="downloadTemplate" :disabled="importing">下载 Excel 模板</el-button>
           <el-upload
             :show-file-list="false"
             accept=".xlsx,.xls"
             :http-request="handleExcelUpload"
+            :disabled="importing"
           >
-            <el-button type="success" size="small">从 Excel 合并点位</el-button>
+            <el-button type="success" size="small" :loading="importing" :disabled="importing">从 Excel 合并点位</el-button>
           </el-upload>
-          <span v-if="isEdit" class="import-hint">已保存任务将写入数据库并刷新列表</span>
-          <span v-else class="import-hint">新建任务将合并到下方表格（保存后生效）</span>
+          <span v-if="!importing && isEdit" class="import-hint">已保存任务将写入数据库并刷新列表</span>
+          <span v-if="!importing && !isEdit" class="import-hint">新建任务将合并到下方表格（保存后生效）</span>
         </el-space>
+        <div v-if="importing" style="margin-top: 8px; max-width: 500px;">
+          <el-progress :percentage="importPercent" :stroke-width="16" :text-inside="true" />
+          <div style="text-align: center; color: #409EFF; font-size: 12px; margin-top: 4px;">{{ importProgress }}</div>
+        </div>
       </el-form-item>
       <el-form-item label="采集点位">
         <div style="display: flex; gap: 8px; align-items: center;">
@@ -103,7 +108,7 @@
         </div>
         <el-table
           ref="pointsTableRef"
-          :data="form.points"
+          :data="pagedPoints"
           border
           stripe
           style="margin-top: 10px;"
@@ -112,23 +117,23 @@
         >
           <el-table-column type="selection" width="45" />
           <el-table-column label="点位名称" min-width="120">
-            <template #default="{ row, $index }">
+            <template #default="{ row }">
               <el-input v-model="row.name" placeholder="如：温度" size="small" />
             </template>
           </el-table-column>
           <el-table-column label="地址" min-width="180">
-            <template #default="{ row, $index }">
+            <template #default="{ row }">
               <el-input v-model="row.address" placeholder="如：ns=2;s=Temperature" size="small" />
             </template>
           </el-table-column>
 
           <el-table-column label="设备编码" min-width="250">
-            <template #default="{ row, $index }">
+            <template #default="{ row }">
               <el-input v-model="row.devId" placeholder="设备编码" size="small" />
             </template>
           </el-table-column>
           <el-table-column label="点位编码" min-width="250">
-            <template #default="{ row, $index }">
+            <template #default="{ row }">
               <el-input v-model="row.nodeId" placeholder="点位编码" size="small" />
             </template>
           </el-table-column>
@@ -155,11 +160,21 @@
             </template>
           </el-table-column>
           <el-table-column label="操作" width="80">
-            <template #default="{ $index }">
-              <el-button type="danger" size="small" @click="removePoint($index)">删除</el-button>
+            <template #default="{ row }">
+              <el-button type="danger" size="small" @click="removePoint(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
+        <div style="display: flex; justify-content: center; margin-top: 12px;">
+          <el-pagination
+            v-if="form.points.length > pageSize"
+            v-model:current-page="currentPage"
+            :page-size="pageSize"
+            :total="form.points.length"
+            layout="total, prev, pager, next, jumper"
+            background
+          />
+        </div>
       </el-form-item>
 
       <el-divider content-position="left">Kafka 配置</el-divider>
@@ -199,8 +214,14 @@
 
       <el-form-item>
         <el-button type="primary" @click="submitForm" :loading="submitting">保存任务</el-button>
-        <el-button @click="goBack">取消</el-button>
+        <el-button @click="goBack" :disabled="submitting">取消</el-button>
       </el-form-item>
+      <div v-if="submitting" style="max-width: 500px; margin-top: 4px;">
+        <el-progress :percentage="savePercent" :stroke-width="18" :text-inside="true" :indeterminate="saveIndeterminate" :duration="3" />
+        <div style="text-align: center; color: #E6A23C; font-size: 13px; margin-top: 6px;">
+          {{ saveProgressText }}
+        </div>
+      </div>
     </el-form>
   </div>
 </template>
@@ -222,8 +243,16 @@ export default {
             const pointsTableRef = ref(null)
             const loading = ref(false)
             const submitting = ref(false)
+            const importing = ref(false)
+            const importProgress = ref('')
+            const importPercent = ref(0)
             const isEdit = ref(false)
             const selectedPoints = ref([])
+            const currentPage = ref(1)
+            const pageSize = ref(500)
+            const savePercent = ref(0)
+            const saveIndeterminate = ref(false)
+            const saveProgressText = ref('')
 
     const form = reactive({
       name: '',
@@ -289,6 +318,11 @@ export default {
       return r
     })
 
+    const pagedPoints = computed(() => {
+      const start = (currentPage.value - 1) * pageSize.value
+      return form.points.slice(start, start + pageSize.value)
+    })
+
     const onProtocolChange = (val) => {
       if (val === 'OPC_UA') {
         form.opcServerUrl = 'opc.tcp://localhost:7718'
@@ -314,8 +348,9 @@ export default {
       form.points.push(point)
     }
 
-    const removePoint = (index) => {
-      form.points.splice(index, 1)
+    const removePoint = (row) => {
+      const idx = form.points.indexOf(row)
+      if (idx !== -1) form.points.splice(idx, 1)
     }
 
     const onPointsSelectionChange = (rows) => {
@@ -347,6 +382,10 @@ export default {
       }
 
       submitting.value = true
+      saveIndeterminate.value = true
+      savePercent.value = 50
+      saveProgressText.value = `正在保存 ${form.points.length} 个点位，请耐心等待...`
+
       try {
         const data = { ...form }
         data.points = form.points.map((p, i) => ({ ...p, sortOrder: i + 1 }))
@@ -373,6 +412,10 @@ export default {
         res = await response.json()
 
         if (res.success) {
+          saveIndeterminate.value = false
+          savePercent.value = 100
+          saveProgressText.value = '保存成功！'
+          await new Promise(r => setTimeout(r, 600))
           ElMessage.success(isEdit.value ? '任务更新成功' : '任务创建成功')
           router.push('/')
         } else {
@@ -382,6 +425,9 @@ export default {
         ElMessage.error('保存任务失败')
       } finally {
         submitting.value = false
+        savePercent.value = 0
+        saveIndeterminate.value = false
+        saveProgressText.value = ''
       }
     }
 
@@ -416,25 +462,40 @@ export default {
         }
 
     const handleExcelUpload = async (options) => {
+      importing.value = true
+      importPercent.value = 0
+      importProgress.value = '正在上传文件...'
       const fd = new FormData()
       fd.append('file', options.file)
       try {
-        // 统一使用预览模式解析，然后在前端合并，避免加载已删除的点位
         const response = await fetch(`${API_BASE}/tasks/preview-import`, {
           method: 'POST',
           body: fd
         })
         const res = await response.json()
-        if (res.success && Array.isArray(res.data)) {
-            const start = form.points.length
-            res.data.forEach((p, i) => {
+        if (!res.success || !Array.isArray(res.data)) {
+          ElMessage.error(res.message || '解析失败')
+          return
+        }
+
+        const allData = res.data
+        const total = allData.length
+        const CHUNK_SIZE = 200
+        const start = form.points.length
+
+        importProgress.value = `共 ${total} 个点位，分批处理中...`
+        importPercent.value = 0
+
+        for (let offset = 0; offset < total; offset += CHUNK_SIZE) {
+          const chunk = allData.slice(offset, offset + CHUNK_SIZE)
+          chunk.forEach((p, i) => {
             const point = {
               name: p.name || '',
               address: p.address || '',
               devId: p.devId || '',
               nodeId: p.nodeId || '',
               scaleFactor: p.scaleFactor !== undefined && p.scaleFactor !== null ? p.scaleFactor : 1.0,
-              sortOrder: start + i + 1
+              sortOrder: start + offset + i + 1
             }
             if (form.protocolType === 'MODBUS_TCP') {
               point.dataType = p.dataType || 'float'
@@ -442,12 +503,21 @@ export default {
             }
             form.points.push(point)
           })
-          ElMessage.success(res.message || '已合并到列表')
-          } else {
-            ElMessage.error(res.message || '解析失败')
+
+          importPercent.value = Math.min(100, Math.round(((offset + chunk.length) / total) * 100))
+          importProgress.value = `已处理 ${Math.min(offset + chunk.length, total)} / ${total} 个点位`
+
+          await new Promise(resolve => setTimeout(resolve, 0))
         }
+
+        ElMessage.success(`成功导入 ${total} 个点位`)
+        currentPage.value = 1
       } catch (e) {
-        ElMessage.error('上传失败')
+        ElMessage.error('上传失败，请尝试减少文件大小')
+      } finally {
+        importing.value = false
+        importPercent.value = 0
+        importProgress.value = ''
       }
     }
 
@@ -480,7 +550,9 @@ export default {
     onMounted(loadTask)
 
     return {
-      formRef, form, rules, loading, submitting, isEdit,
+      formRef, form, rules, loading, submitting, importing, importProgress, importPercent, isEdit,
+      currentPage, pageSize, pagedPoints,
+      savePercent, saveIndeterminate, saveProgressText,
       onProtocolChange, addPoint, removePoint, removeSelectedPoints, onPointsSelectionChange,
               submitForm, goBack, downloadTemplate, handleExcelUpload,
               selectedPoints, pointsTableRef

@@ -637,6 +637,7 @@ public class TaskController {
             @RequestParam("file") MultipartFile file,
             @PathVariable Long id) {
         Map<String, Object> result = new HashMap<>();
+        long startTime = System.currentTimeMillis();
         try {
             Optional<Task> taskOptional = taskService.getTaskById(id);
             if (!taskOptional.isPresent()) {
@@ -646,88 +647,94 @@ public class TaskController {
             }
             Task task = taskOptional.get();
 
-            // 读取Excel文件
+            log.info("开始导入点位，任务ID: {}, 文件名: {}, 大小: {} bytes",
+                    id, file.getOriginalFilename(), file.getSize());
+
             Workbook workbook = WorkbookFactory.create(file.getInputStream());
             Sheet sheet = workbook.getSheetAt(0);
+
+            int totalRows = sheet.getLastRowNum();
+            log.info("Excel共 {} 行数据（含表头），开始解析...", totalRows);
 
             List<TaskPoint> points = new ArrayList<>();
             Iterator<Row> rowIterator = sheet.iterator();
 
-            // 跳过表头
             if (rowIterator.hasNext()) {
                 rowIterator.next();
             }
 
-            // 读取数据行
+            int parseErrors = 0;
             while (rowIterator.hasNext()) {
                 Row row = rowIterator.next();
 
-                // 跳过空行
-                if (row.getCell(0) == null || row.getCell(0).getStringCellValue().trim().isEmpty()) {
-                    continue;
-                }
+                try {
+                    if (row.getCell(0) == null || row.getCell(0).getStringCellValue().trim().isEmpty()) {
+                        continue;
+                    }
 
-                TaskPoint point = new TaskPoint();
-                // 设置任务关联
-                Task taskRef = new Task();
-                taskRef.setId(id);
-                point.setTask(taskRef);
-                
-                point.setName(row.getCell(0).getStringCellValue().trim());
-                String address = row.getCell(1).getStringCellValue().trim();
-                
-                // 处理OPC UA地址格式，提取命名空间和节点ID
-                if ("OPC_UA".equalsIgnoreCase(task.getProtocolType())) {
-                    // 匹配ns=2;s=Bu/test格式
-                    java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("ns=(\\d+);s=(.+)");
-                    java.util.regex.Matcher matcher = pattern.matcher(address);
-                    if (matcher.matches()) {
-                        // 如果地址包含命名空间，提取出来
-                        String namespace = matcher.group(1);
-                        String nodeId = matcher.group(2);
-                        point.setAddress(nodeId); // 只保存节点ID部分
-                        // 如果任务没有设置命名空间，设置为提取的命名空间
+                    TaskPoint point = new TaskPoint();
+                    Task taskRef = new Task();
+                    taskRef.setId(id);
+                    point.setTask(taskRef);
+
+                    point.setName(row.getCell(0).getStringCellValue().trim());
+                    String address = row.getCell(1).getStringCellValue().trim();
+
+                    if ("OPC_UA".equalsIgnoreCase(task.getProtocolType())) {
+                        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("ns=(\\d+);s=(.+)");
+                        java.util.regex.Matcher matcher = pattern.matcher(address);
+                        if (matcher.matches()) {
+                            String namespace = matcher.group(1);
+                            String nodeId = matcher.group(2);
+                            point.setAddress(nodeId);
                             if (task.getOpcNamespace() == null || task.getOpcNamespace().isEmpty()) {
                                 task.setOpcNamespace(namespace);
-                                taskService.updateTask(task.getId(), task); // 更新任务的命名空间
+                                taskService.updateTask(task.getId(), task);
                             }
+                        } else {
+                            point.setAddress(address);
+                        }
                     } else {
-                        // 如果地址不包含命名空间，直接保存
                         point.setAddress(address);
                     }
-                } else {
-                    // 其他协议直接保存地址
-                    point.setAddress(address);
-                }
 
-                // 处理可选字段
-                if (row.getCell(2) != null) {
-                    point.setDevId(row.getCell(2).getStringCellValue().trim());
-                }
-                if (row.getCell(3) != null) {
-                    point.setNodeId(row.getCell(3).getStringCellValue().trim());
-                }
-                if (row.getCell(4) != null && "MODBUS".equalsIgnoreCase(task.getProtocolType())) {
-                    point.setDataType(row.getCell(4).getStringCellValue().trim());
-                }
-                if (row.getCell(5) != null && "MODBUS".equalsIgnoreCase(task.getProtocolType())) {
-                    point.setBitLength((int) row.getCell(5).getNumericCellValue());
-                }
-                if (row.getCell(6) != null) {
-                    point.setScaleFactor(row.getCell(6).getNumericCellValue());
-                }
+                    if (row.getCell(2) != null) {
+                        point.setDevId(row.getCell(2).getStringCellValue().trim());
+                    }
+                    if (row.getCell(3) != null) {
+                        point.setNodeId(row.getCell(3).getStringCellValue().trim());
+                    }
+                    if (row.getCell(4) != null && "MODBUS".equalsIgnoreCase(task.getProtocolType())) {
+                        point.setDataType(row.getCell(4).getStringCellValue().trim());
+                    }
+                    if (row.getCell(5) != null && "MODBUS".equalsIgnoreCase(task.getProtocolType())) {
+                        point.setBitLength((int) row.getCell(5).getNumericCellValue());
+                    }
+                    if (row.getCell(6) != null) {
+                        point.setScaleFactor(row.getCell(6).getNumericCellValue());
+                    }
 
-                points.add(point);
+                    points.add(point);
+                } catch (Exception e) {
+                    parseErrors++;
+                    log.warn("解析第 {} 行失败: {}", row.getRowNum() + 1, e.getMessage());
+                }
             }
 
             workbook.close();
 
-            // 保存点位
+            long parseTime = System.currentTimeMillis() - startTime;
+            log.info("Excel解析完成，有效点位: {} 个，解析失败: {} 行，耗时: {}ms",
+                    points.size(), parseErrors, parseTime);
+
             if (!points.isEmpty()) {
-                pointService.savePoints(points);
+                pointService.savePointsBatch(points);
+                long totalTime = System.currentTimeMillis() - startTime;
+                log.info("点位导入完成，共 {} 个点位，总耗时: {}ms", points.size(), totalTime);
+
                 result.put("success", true);
                 result.put("message", "成功导入 " + points.size() + " 个点位");
-                result.put("data", points);
+                result.put("count", points.size());
             } else {
                 result.put("success", false);
                 result.put("message", "未找到有效点位数据");

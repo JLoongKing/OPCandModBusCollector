@@ -42,17 +42,19 @@
             v-if="row.status !== 'RUNNING'"
             type="success"
             size="small"
+            :loading="actionLoading['start-' + row.id]"
             @click="startTask(row)"
           >启动</el-button>
           <el-button
             v-else
             type="warning"
             size="small"
+            :loading="actionLoading['stop-' + row.id]"
             @click="stopTask(row)"
           >停止</el-button>
           <el-button type="primary" size="small" @click="viewDashboard(row)">数据</el-button>
           <el-button size="small" @click="editTask(row)">编辑</el-button>
-          <el-button type="danger" size="small" @click="deleteTask(row)">删除</el-button>
+          <el-button type="danger" size="small" :loading="actionLoading['delete-' + row.id]" @click="deleteTask(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -60,10 +62,9 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-// 使用原生Fetch API替代axios
 
 const API_BASE = '/api'
 
@@ -73,6 +74,7 @@ export default {
     const router = useRouter()
     const tasks = ref([])
     const loading = ref(false)
+    const actionLoading = reactive({})
 
     const fetchTasks = async () => {
       loading.value = true
@@ -102,12 +104,11 @@ export default {
     }
 
     const startTask = async (task) => {
+      actionLoading['start-' + task.id] = true
       try {
         const response = await fetch(`${API_BASE}/tasks/${task.id}/start`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          }
+          headers: { 'Content-Type': 'application/json' }
         })
         const res = await response.json()
         if (res.success) {
@@ -118,16 +119,17 @@ export default {
         }
       } catch (e) {
         ElMessage.error('启动任务失败')
+      } finally {
+        actionLoading['start-' + task.id] = false
       }
     }
 
     const stopTask = async (task) => {
+      actionLoading['stop-' + task.id] = true
       try {
         const response = await fetch(`${API_BASE}/tasks/${task.id}/stop`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          }
+          headers: { 'Content-Type': 'application/json' }
         })
         const res = await response.json()
         if (res.success) {
@@ -138,6 +140,8 @@ export default {
         }
       } catch (e) {
         ElMessage.error('停止任务失败')
+      } finally {
+        actionLoading['stop-' + task.id] = false
       }
     }
 
@@ -148,11 +152,10 @@ export default {
           '确认删除',
           { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
         )
+        actionLoading['delete-' + task.id] = true
         const response = await fetch(`${API_BASE}/tasks/${task.id}`, {
           method: 'DELETE',
-          headers: {
-            'Content-Type': 'application/json',
-          }
+          headers: { 'Content-Type': 'application/json' }
         })
         const res = await response.json()
         if (res.success) {
@@ -165,13 +168,15 @@ export default {
         if (e !== 'cancel') {
           ElMessage.error('删除任务失败')
         }
+      } finally {
+        actionLoading['delete-' + task.id] = false
       }
     }
 
     onMounted(fetchTasks)
 
     return {
-      tasks, loading, createTask, editTask, viewDashboard,
+      tasks, loading, actionLoading, createTask, editTask, viewDashboard,
       startTask, stopTask, deleteTask
     }
   }

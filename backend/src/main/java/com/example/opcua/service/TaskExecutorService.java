@@ -169,23 +169,20 @@ public class TaskExecutorService {
     public void stopTask(Long taskId) {
         ScheduledFuture<?> future = runningTasks.remove(taskId);
         if (future != null) {
-            future.cancel(false);
+            future.cancel(true);
         }
 
         ScheduledExecutorService executor = taskExecutors.remove(taskId);
         if (executor != null) {
-            executor.shutdown();
+            executor.shutdownNow();
             try {
-                if (!executor.awaitTermination(3, TimeUnit.SECONDS)) {
-                    executor.shutdownNow();
-                }
+                executor.awaitTermination(1, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
-                executor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
         }
 
-        disconnectOpcUa(taskId);
+        disconnectOpcUaAsync(taskId);
         log.info("任务 {} 已停止", taskId);
     }
 
@@ -193,17 +190,18 @@ public class TaskExecutorService {
         return runningTasks.containsKey(taskId);
     }
 
-    private void disconnectOpcUa(Long taskId) {
+    private void disconnectOpcUaAsync(Long taskId) {
         OpcUaClient client = opcUaClients.remove(taskId);
         if (client != null) {
-            log.info("任务 {} 正在断开OPC UA连接...", taskId);
-            try {
-                client.disconnect().get(5, TimeUnit.SECONDS);
-                log.info("任务 {} OPC UA连接已断开", taskId);
-            } catch (Exception e) {
-                log.warn("任务 {} 断开OPC UA连接异常 - 错误类型: {}, 错误信息: {}",
-                        taskId, e.getClass().getName(), e.getMessage());
-            }
+            log.info("任务 {} 异步断开OPC UA连接...", taskId);
+            new Thread(() -> {
+                try {
+                    client.disconnect().get(3, TimeUnit.SECONDS);
+                    log.info("任务 {} OPC UA连接已断开", taskId);
+                } catch (Exception e) {
+                    log.warn("任务 {} 断开OPC UA连接异常: {}", taskId, e.getMessage());
+                }
+            }, "opcua-disconnect-" + taskId).start();
         }
     }
 
@@ -283,6 +281,11 @@ public class TaskExecutorService {
                 }
                 
                 DataRecord record = records.get(i);
+                // 跳过空值（包括 null、空字符串 和 "null" 字符串）
+                if (record.getValue() == null || record.getValue().isEmpty() || "null".equals(record.getValue())) {
+                    log.warn("任务 {} 点位 {} 值为空，跳过Kafka发送", task.getId(), record.getPointName());
+                    continue;
+                }
                 // 格式：{node1};{val1};{time}
                 // 格式化时间为yyyy-MM-dd HH:mm:ss格式
                 DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -407,7 +410,7 @@ public class TaskExecutorService {
                 }
                 
                 // 持久化记录
-                if (valueStr != null && !valueStr.isEmpty()) {
+                if (valueStr != null && !valueStr.isEmpty() && !"null".equals(valueStr)) {
                     DataRecord record = persistRecord(task, point, valueStr, hardwareTime);
                     
                     // 按设备分组
@@ -423,7 +426,7 @@ public class TaskExecutorService {
         } catch (Exception e) {
             log.error("任务 {} OPC UA 读取失败，将尝试重连 - 错误类型: {}, 错误信息: {}",
                     task.getId(), e.getClass().getName(), e.getMessage(), e);
-            disconnectOpcUa(task.getId());
+            disconnectOpcUaAsync(task.getId());
         }
     }
     
@@ -638,14 +641,17 @@ public class TaskExecutorService {
             }
             
             // 持久化记录
-            DataRecord record = persistRecord(task, point, valueStr, dataTime);
-            
-            // 按设备分组
-            String deviceId = point.getDevId() != null && !point.getDevId().trim().isEmpty()
-                    ? point.getDevId().trim()
-                    : "DEFAULT_DEV";
-            
-            deviceDataMap.computeIfAbsent(deviceId, k -> new ArrayList<>()).add(record);
+            if (valueStr != null && !valueStr.isEmpty() && !valueStr.startsWith("ERROR:")) {
+                DataRecord record = persistRecord(task, point, valueStr, dataTime);
+
+                String deviceId = point.getDevId() != null && !point.getDevId().trim().isEmpty()
+                        ? point.getDevId().trim()
+                        : "DEFAULT_DEV";
+
+                deviceDataMap.computeIfAbsent(deviceId, k -> new ArrayList<>()).add(record);
+            } else {
+                log.warn("任务 {} 点位 {} 读取到空值或错误，跳过Kafka发送", task.getId(), point.getName());
+            }
         }
     }
     
@@ -679,15 +685,17 @@ public class TaskExecutorService {
             // 模拟数据使用当前时间作为数据产生时间
             LocalDateTime simulatedTime = now;
             
-            // 持久化记录
-            DataRecord record = persistRecord(task, point, valueStr, simulatedTime);
-            
-            // 按设备分组
-            String deviceId = point.getDevId() != null && !point.getDevId().trim().isEmpty()
-                    ? point.getDevId().trim()
-                    : "DEFAULT_DEV";
-            
-            deviceDataMap.computeIfAbsent(deviceId, k -> new ArrayList<>()).add(record);
+            // 持久化记录（过滤空值）
+            if (valueStr != null && !valueStr.isEmpty() && !"null".equals(valueStr)) {
+                DataRecord record = persistRecord(task, point, valueStr, simulatedTime);
+                
+                // 按设备分组
+                String deviceId = point.getDevId() != null && !point.getDevId().trim().isEmpty()
+                        ? point.getDevId().trim()
+                        : "DEFAULT_DEV";
+                
+                deviceDataMap.computeIfAbsent(deviceId, k -> new ArrayList<>()).add(record);
+            }
         }
     }
     

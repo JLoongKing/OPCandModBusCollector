@@ -1,11 +1,18 @@
 server:
   port: 8081
+  tomcat:
+    max-http-form-post-size: 50MB
 
 spring:
   application:
     name: opcua-client
   main:
     allow-bean-definition-overriding: true
+
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
 
   datasource:
     url: jdbc:postgresql://127.0.0.1:5432/opcua

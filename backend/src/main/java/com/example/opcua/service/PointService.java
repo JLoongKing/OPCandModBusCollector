@@ -7,6 +7,7 @@ import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -18,7 +19,9 @@ import java.util.List;
 @Slf4j
 @Service
 public class PointService {
-    
+
+    private static final int BATCH_SIZE = 500;
+
     @Autowired
     private TaskPointRepository taskPointRepository;
 
@@ -177,7 +180,7 @@ public class PointService {
 
     /**
      * 保存多个点位
-     * 
+     *
      * @param points 点位列表
      * @return 保存后的点位列表
      */
@@ -185,10 +188,47 @@ public class PointService {
         if (points == null || points.isEmpty()) {
             return new ArrayList<>();
         }
-        
+
         List<TaskPoint> savedPoints = taskPointRepository.saveAll(points);
         log.info("保存了 {} 个点位", savedPoints.size());
         return savedPoints;
+    }
+
+    /**
+     * 分批保存点位，防止大数据量下内存溢出和事务超时
+     *
+     * @param points 点位列表
+     * @return 保存后的点位列表
+     */
+    @Transactional
+    public List<TaskPoint> savePointsBatch(List<TaskPoint> points) {
+        if (points == null || points.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<TaskPoint> allSaved = new ArrayList<>(points.size());
+        int total = points.size();
+        int batches = (total + BATCH_SIZE - 1) / BATCH_SIZE;
+
+        log.info("开始分批保存点位，总数: {}, 批次大小: {}, 总批次数: {}", total, BATCH_SIZE, batches);
+
+        for (int i = 0; i < total; i += BATCH_SIZE) {
+            int end = Math.min(i + BATCH_SIZE, total);
+            List<TaskPoint> batch = points.subList(i, end);
+            List<TaskPoint> saved = taskPointRepository.saveAll(batch);
+            allSaved.addAll(saved);
+
+            int batchNum = (i / BATCH_SIZE) + 1;
+            if (log.isDebugEnabled() || batchNum % 10 == 0 || batchNum == batches) {
+                log.info("批次 {}/{} 保存完成，保存 {} 个点位，累计 {} 个",
+                        batchNum, batches, saved.size(), allSaved.size());
+            }
+
+            taskPointRepository.flush();
+        }
+
+        log.info("分批保存完成，共保存 {} 个点位", allSaved.size());
+        return allSaved;
     }
 
     private String getCellValueAsString(Cell cell) {
