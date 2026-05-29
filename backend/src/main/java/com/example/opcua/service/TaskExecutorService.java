@@ -638,7 +638,8 @@ public class TaskExecutorService {
             try {
                 String result = ModbusTcpUtil.readPoint(host, port, timeout, point.getAddress(), 
                         point.getDevId(), point.getNodeId(), point.getDataType(), 
-                        point.getBitLength(), point.getScaleFactor());
+                        point.getBitLength(), point.getScaleFactor(),
+                        point.getAddressOffsetMinusOne(), point.getBitReadPosition());
                 
                 // 解析结果和时间戳（格式: value|timestamp）
                 if (result.contains("|")) {

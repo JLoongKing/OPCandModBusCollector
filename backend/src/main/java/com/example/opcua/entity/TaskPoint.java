@@ -45,6 +45,12 @@ public class TaskPoint {
     @Column(name = "json_path", length = 500)
     private String jsonPath;
 
+    @Column(name = "address_offset_minus_one")
+    private Boolean addressOffsetMinusOne = false;
+
+    @Column(name = "bit_read_position")
+    private Integer bitReadPosition;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "task_id")
     @JsonIgnore

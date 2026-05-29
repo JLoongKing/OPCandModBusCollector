@@ -196,6 +196,19 @@
               <el-input-number v-model="row.scaleFactor" :min="0.0001" :max="10000" :step="0.1" size="small" style="width: 100%;" />
             </template>
           </el-table-column>
+          <el-table-column v-if="form.protocolType === 'MODBUS_TCP'" label="地址-1" width="80">
+            <template #default="{ row }">
+              <el-select v-model="row.addressOffsetMinusOne" placeholder="选择" size="small" style="width: 100%;">
+                <el-option label="否" :value="false" />
+                <el-option label="是" :value="true" />
+              </el-select>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="form.protocolType === 'MODBUS_TCP'" label="bit位" width="80">
+            <template #default="{ row }">
+              <el-input-number v-model="row.bitReadPosition" :min="0" :max="31" size="small" style="width: 100%;" placeholder="0-31" />
+            </template>
+          </el-table-column>
           <el-table-column label="操作" width="80">
             <template #default="{ row }">
               <el-button type="danger" size="small" @click="removePoint(row)">删除</el-button>
@@ -396,8 +409,10 @@ export default {
         sortOrder: form.points.length + 1
       }
       if (form.protocolType === 'MODBUS_TCP') {
-        point.dataType = 'float'
-        point.bitLength = 32
+        point.dataType = 'uint'
+        point.bitLength = 16
+        point.addressOffsetMinusOne = false
+        point.bitReadPosition = null
       }
       if (form.protocolType === 'HTTP') {
         point.jsonPath = ''
@@ -558,8 +573,10 @@ export default {
               sortOrder: start + offset + i + 1
             }
             if (form.protocolType === 'MODBUS_TCP') {
-              point.dataType = p.dataType || 'float'
-              point.bitLength = p.bitLength || 32
+              point.dataType = p.dataType || 'uint'
+              point.bitLength = p.bitLength || 16
+              point.addressOffsetMinusOne = p.addressOffsetMinusOne || false
+              point.bitReadPosition = p.bitReadPosition || null
             }
             if (form.protocolType === 'HTTP') {
               point.jsonPath = p.jsonPath || ''

@@ -38,6 +38,9 @@ public class KafkaProducerService {
     @Value("${spring.kafka.producer.max-retry-attempts}")
     private int maxRetryAttempts;
 
+    @Value("${spring.kafka.debug-mode:false}")
+    private boolean debugMode;
+
     private final Map<String, KafkaTemplate<String, Object>> templateCache = new ConcurrentHashMap<>();
 
     private KafkaTemplate<String, Object> getTemplateForTask(Task task) {
@@ -102,12 +105,12 @@ public class KafkaProducerService {
         return sendMessageWithCallback(opcuaDataTopic, message);
     }
 
-    private static String truncateMsg(Object msg) {
+    private String truncateMsg(Object msg) {
         if (msg == null) {
             return "null";
         }
         String s = msg.toString();
-        if (s.length() <= 100) {
+        if (debugMode || s.length() <= 100) {
             return s;
         }
         return s.substring(0, 100) + "...";
@@ -231,6 +234,17 @@ public class KafkaProducerService {
         String key = task.getKafkaKey() != null && !task.getKafkaKey().isEmpty()
                 ? task.getKafkaKey()
                 : null;
+
+        if (debugMode) {
+            if (key != null) {
+                log.info("任务 {} [DEBUG] Kafka不发送 (topic={}, key={}, 消息长度={}): {}",
+                        task.getId(), topic, key, message.length(), truncateMsg(message));
+            } else {
+                log.info("任务 {} [DEBUG] Kafka不发送 (topic={}, 消息长度={}): {}",
+                        task.getId(), topic, message.length(), truncateMsg(message));
+            }
+            return;
+        }
 
         KafkaTemplate<String, Object> template = getTemplateForTask(task);
 

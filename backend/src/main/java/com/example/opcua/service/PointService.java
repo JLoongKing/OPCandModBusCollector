@@ -158,6 +158,30 @@ public class PointService {
                     }
                 }
                 
+                // 读取地址是否-1（Modbus专用）
+                Cell addrMinusOneCell = row.getCell(7);
+                if (addrMinusOneCell != null) {
+                    String addrMinusOneStr = getCellValueAsString(addrMinusOneCell);
+                    if (addrMinusOneStr != null && !addrMinusOneStr.isEmpty()) {
+                        point.setAddressOffsetMinusOne("是".equals(addrMinusOneStr) || "true".equalsIgnoreCase(addrMinusOneStr) || "1".equals(addrMinusOneStr));
+                        log.info("第 {} 行 - 地址是否-1: {}", rowNum, point.getAddressOffsetMinusOne());
+                    }
+                }
+                
+                // 读取bit位（Modbus专用）
+                Cell bitPosCell = row.getCell(8);
+                if (bitPosCell != null) {
+                    String bitPosStr = getCellValueAsString(bitPosCell);
+                    if (bitPosStr != null && !bitPosStr.isEmpty()) {
+                        try {
+                            point.setBitReadPosition(Integer.parseInt(bitPosStr));
+                            log.info("第 {} 行 - bit读取位: {}", rowNum, point.getBitReadPosition());
+                        } catch (NumberFormatException e) {
+                            log.warn("第 {} 行 - bit读取位解析失败: {}", rowNum, bitPosStr);
+                        }
+                    }
+                }
+                
                 point.setSortOrder(sortOrder++);
                 
                 if (point.getName() != null && !point.getName().trim().isEmpty() &&

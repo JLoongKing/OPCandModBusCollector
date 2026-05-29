@@ -538,7 +538,7 @@ public class TaskController {
 
             // 根据协议类型设置不同的模板表头
             if ("MODBUS".equalsIgnoreCase(protocol)) {
-                headers = new String[]{"点位名称*", "点位地址*", "设备ID", "点位ID", "数据类型", "位数", "比例系数（可选）"};
+                headers = new String[]{"点位名称*", "点位地址*", "设备ID", "点位ID", "数据类型", "位数", "比例系数（可选）", "地址是否-1", "bit读取位"};
             } else if ("HTTP".equalsIgnoreCase(protocol)) {
                 headers = new String[]{"点位名称*", "JSON路径*", "设备ID", "点位ID", "比例系数（可选）"};
             } else {
@@ -594,6 +594,8 @@ public class TaskController {
                 row1.createCell(4).setCellValue("float");
                 row1.createCell(5).setCellValue(32);
                 row1.createCell(6).setCellValue(1.0);
+                row1.createCell(7).setCellValue("否");
+                row1.createCell(8).setCellValue("");
                 
                 Row row2 = sheet.createRow(2);
                 row2.createCell(0).setCellValue("压力传感器");
@@ -603,6 +605,8 @@ public class TaskController {
                 row2.createCell(4).setCellValue("float");
                 row2.createCell(5).setCellValue(32);
                 row2.createCell(6).setCellValue(1.0);
+                row2.createCell(7).setCellValue("否");
+                row2.createCell(8).setCellValue("");
             } else if ("HTTP".equalsIgnoreCase(protocol)) {
                 Row row1 = sheet.createRow(1);
                 row1.createCell(0).setCellValue("温度");
@@ -739,6 +743,22 @@ public class TaskController {
                     if (row.getCell(6) != null) {
                         point.setScaleFactor(row.getCell(6).getNumericCellValue());
                     }
+                    if (row.getCell(7) != null && "MODBUS".equalsIgnoreCase(task.getProtocolType())) {
+                        String addrMinusOneStr = getCellValueAsString(row.getCell(7));
+                        if (addrMinusOneStr != null && !addrMinusOneStr.isEmpty()) {
+                            point.setAddressOffsetMinusOne("是".equals(addrMinusOneStr.trim()) || "true".equalsIgnoreCase(addrMinusOneStr.trim()) || "1".equals(addrMinusOneStr.trim()));
+                        }
+                    }
+                    if (row.getCell(8) != null && "MODBUS".equalsIgnoreCase(task.getProtocolType())) {
+                        String bitPosStr = getCellValueAsString(row.getCell(8));
+                        if (bitPosStr != null && !bitPosStr.isEmpty()) {
+                            try {
+                                point.setBitReadPosition(Integer.parseInt(bitPosStr.trim()));
+                            } catch (NumberFormatException e) {
+                                log.warn("bit读取位解析失败: {}", bitPosStr);
+                            }
+                        }
+                    }
 
                     points.add(point);
                 } catch (Exception e) {
@@ -836,6 +856,22 @@ public class TaskController {
                             point.put("scaleFactor", Double.parseDouble(scaleFactorStr));
                         } catch (NumberFormatException e) {
                             log.warn("比例系数解析失败: {}", scaleFactorStr);
+                        }
+                    }
+                    if (row.getCell(7) != null) {
+                        String addrMinusOneStr = getCellValueAsString(row.getCell(7));
+                        if (addrMinusOneStr != null && !addrMinusOneStr.isEmpty()) {
+                            point.put("addressOffsetMinusOne", "是".equals(addrMinusOneStr.trim()) || "true".equalsIgnoreCase(addrMinusOneStr.trim()) || "1".equals(addrMinusOneStr.trim()));
+                        }
+                    }
+                    if (row.getCell(8) != null) {
+                        String bitPosStr = getCellValueAsString(row.getCell(8));
+                        if (bitPosStr != null && !bitPosStr.isEmpty()) {
+                            try {
+                                point.put("bitReadPosition", Integer.parseInt(bitPosStr.trim()));
+                            } catch (NumberFormatException e) {
+                                log.warn("bit读取位解析失败: {}", bitPosStr);
+                            }
                         }
                     }
                 } else {

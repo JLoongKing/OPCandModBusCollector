@@ -99,7 +99,8 @@ public final class ModbusTcpUtil {
      * @throws Exception 通信异常或数据解析异常
      */
     public static String readPoint(String host, int port, int timeoutMs, String address,
-                                   String devId, String nodeId, String dataType, Integer bitLength, Double scaleFactor) throws Exception {
+                                   String devId, String nodeId, String dataType, Integer bitLength,
+                                   Double scaleFactor, Boolean addressOffsetMinusOne, Integer bitReadPosition) throws Exception {
         // 参数校验
         if (host == null || host.trim().isEmpty()) {
             throw new IllegalArgumentException("服务器地址不能为空");
@@ -112,6 +113,12 @@ public final class ModbusTcpUtil {
         int[] parsed = parseSlaveAndRegister(address.trim());
         int slaveId = parsed[0];
         int refNumber = parsed[1];
+
+        // 地址-1处理
+        if (addressOffsetMinusOne != null && addressOffsetMinusOne) {
+            refNumber = refNumber - 1;
+            log.debug("地址-1处理: 原始地址已减1, 新地址: {}", refNumber);
+        }
 
         // 根据地址范围确定寄存器类型和起始地址
         ModbusAddressInfo addressInfo = resolveAddress(refNumber);
@@ -151,7 +158,17 @@ public final class ModbusTcpUtil {
                 LocalDateTime readTime = LocalDateTime.now();
                 
                 // 返回结果和时间戳
-                return processResult(value, scaleFactor) + "|" + readTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+                String result = processResult(value, scaleFactor);
+                
+                // bit位读取处理
+                if (bitReadPosition != null && bitReadPosition >= 0 && bitReadPosition < 32) {
+                    int intValue = value.intValue();
+                    int bitValue = (intValue >> bitReadPosition) & 1;
+                    log.debug("bit位读取: 寄存器值={}, bit位置={}, bit值={}", intValue, bitReadPosition, bitValue);
+                    return bitValue + "|" + readTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+                }
+                
+                return result + "|" + readTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
 
             } catch (Exception e) {
                 lastException = e;
@@ -325,10 +342,10 @@ public final class ModbusTcpUtil {
     private static String convertToModbus4jDataType(String dataType, Integer bitLength) {
         // 默认值处理
         if (dataType == null) {
-            dataType = "float";
+            dataType = "uint";
         }
         if (bitLength == null) {
-            bitLength = 32;
+            bitLength = 16;
         }
 
         dataType = dataType.toLowerCase();
@@ -358,7 +375,7 @@ public final class ModbusTcpUtil {
      * @throws Exception 通信异常
      */
     public static String readPoint(String host, String address, String devId, String nodeId) throws Exception {
-        return readPoint(host, MODBUS_DEFAULT_PORT, 5000, address, devId, nodeId, null, null, null);
+        return readPoint(host, MODBUS_DEFAULT_PORT, 5000, address, devId, nodeId, null, null, null, null, null);
     }
 
     /**

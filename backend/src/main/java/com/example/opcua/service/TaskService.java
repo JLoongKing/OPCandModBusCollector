@@ -173,7 +173,9 @@ public class TaskService {
                 newPoint.setDataType(point.getDataType());
                 newPoint.setBitLength(point.getBitLength());
                 newPoint.setScaleFactor(point.getScaleFactor());
-                newPoint.setJsonPath(point.getJsonPath()); // 复制 jsonPath
+                newPoint.setJsonPath(point.getJsonPath());
+                newPoint.setAddressOffsetMinusOne(point.getAddressOffsetMinusOne());
+                newPoint.setBitReadPosition(point.getBitReadPosition());
                 newPoint.setSortOrder(sortOrder++);
                 newPoint.setTask(existing);
                 existing.getPoints().add(newPoint);
@@ -246,7 +248,9 @@ public class TaskService {
             p.setDataType(src.getDataType());
             p.setBitLength(src.getBitLength());
             p.setScaleFactor(src.getScaleFactor());
-            p.setJsonPath(src.getJsonPath()); // 复制 jsonPath
+            p.setJsonPath(src.getJsonPath());
+            p.setAddressOffsetMinusOne(src.getAddressOffsetMinusOne());
+            p.setBitReadPosition(src.getBitReadPosition());
             p.setSortOrder(nextOrder++);
             p.setTask(task);
             task.getPoints().add(p);

@@ -61,6 +61,7 @@ spring:
                   connection: 1
     topic:
       opcua-data: opcua-data-collection
+    debug-mode: false  # true: 打印完整消息且不发送; false: 截断消息(100字符)并发送
 
 logging:
   level:
