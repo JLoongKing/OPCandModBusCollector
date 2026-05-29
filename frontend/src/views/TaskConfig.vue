@@ -206,7 +206,7 @@
           </el-table-column>
           <el-table-column v-if="form.protocolType === 'MODBUS_TCP'" label="bit位" width="120">
             <template #default="{ row }">
-              <el-input-number v-model="row.bitReadPosition" :min="0" :max="31" size="small" style="width: 100%;" placeholder="0-31" />
+              <el-input-number v-model="row.bitReadPosition" :min="0" :max="15" size="small" style="width: 100%;" placeholder="0-15" />
             </template>
           </el-table-column>
           <el-table-column label="操作" width="120">

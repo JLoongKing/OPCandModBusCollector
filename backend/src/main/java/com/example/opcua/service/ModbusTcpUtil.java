@@ -161,10 +161,14 @@ public final class ModbusTcpUtil {
                 String result = processResult(value, scaleFactor);
                 
                 // bit位读取处理
-                if (bitReadPosition != null && bitReadPosition >= 0 && bitReadPosition < 32) {
+                if (bitReadPosition != null && bitReadPosition >= 0 && bitReadPosition < 16) {
                     int intValue = value.intValue();
-                    int bitValue = (intValue >> bitReadPosition) & 1;
-                    log.debug("bit位读取: 寄存器值={}, bit位置={}, bit值={}", intValue, bitReadPosition, bitValue);
+                    // 转换为16位二进制字符串，前面补0
+                    String binaryString = String.format("%16s", Integer.toBinaryString(intValue & 0xFFFF)).replace(' ', '0');
+                    // 取第bitReadPosition位（从左到右，0为最高位）
+                    char bitChar = binaryString.charAt(bitReadPosition);
+                    int bitValue = bitChar == '1' ? 1 : 0;
+                    log.debug("bit位读取: 寄存器值={}, 16位二进制={}, bit位置={}, bit值={}", intValue, binaryString, bitReadPosition, bitValue);
                     return bitValue + "|" + readTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
                 }
                 
