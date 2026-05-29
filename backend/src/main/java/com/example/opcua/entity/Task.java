@@ -120,6 +120,9 @@ public class Task {
     @Column(name = "kafka_buffer_memory")
     private Long kafkaBufferMemory;
 
+    @Column(name = "kafka_message_header", length = 500)
+    private String kafkaMessageHeader;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

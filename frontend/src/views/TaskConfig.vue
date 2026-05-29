@@ -247,6 +247,9 @@
         <el-form-item label="缓冲区内存(bytes)">
           <el-input-number v-model="form.kafkaBufferMemory" :min="1048576" :max="134217728" :step="1048576" />
         </el-form-item>
+        <el-form-item label="报文头部">
+          <el-input v-model="form.kafkaMessageHeader" placeholder="如：HDMY;YZT_XJH;;;;;;;;，不填默认使用此值" />
+        </el-form-item>
       </template>
 
       <el-form-item>
@@ -323,6 +326,7 @@ export default {
       kafkaBatchSize: 16384,
       kafkaLingerMs: 0,
       kafkaBufferMemory: 33554432,
+      kafkaMessageHeader: '',
       points: []
     })
 

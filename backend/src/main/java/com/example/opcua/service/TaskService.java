@@ -153,6 +153,7 @@ public class TaskService {
         existing.setKafkaBatchSize(updatedTask.getKafkaBatchSize());
         existing.setKafkaLingerMs(updatedTask.getKafkaLingerMs());
         existing.setKafkaBufferMemory(updatedTask.getKafkaBufferMemory());
+        existing.setKafkaMessageHeader(updatedTask.getKafkaMessageHeader());
 
         if (updatedTask.getPoints() != null) {
             // 完全清空现有点位，确保orphanRemoval生效

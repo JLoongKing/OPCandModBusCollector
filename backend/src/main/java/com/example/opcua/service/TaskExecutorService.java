@@ -267,8 +267,11 @@ public class TaskExecutorService {
      * @return 格式化后的Kafka报文
      */
     private String buildKafkaMessage(Task task, Map<String, List<DataRecord>> deviceDataMap) {
-        // 构建头部
-        StringBuilder header = new StringBuilder("HDMY;YZT_XJH;;;;;;;;");
+        String headerContent = task.getKafkaMessageHeader();
+        if (headerContent == null || headerContent.trim().isEmpty()) {
+            headerContent = "HDMY;YZT_XJH;;;;;;;;";
+        }
+        StringBuilder header = new StringBuilder(headerContent);
         
         // 构建节点区
         StringBuilder nodeSection = new StringBuilder();
